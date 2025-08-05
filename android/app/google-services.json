@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "101285275896",
+    "project_id": "firstshot-1940e",
+    "storage_bucket": "firstshot-1940e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:101285275896:android:e5595f47aaa310e9f4f30d",
+        "android_client_info": {
+          "package_name": "com.firstshot.my"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8KkLXfdtxbmKszN9MUi4hLSoskyz04uI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
