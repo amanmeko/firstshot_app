@@ -4,7 +4,9 @@ import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'services/api_service.dart';
 
 class Product {
   final int id;
@@ -145,7 +147,7 @@ class _ListProductsPageState extends State<ListProductsPage> {
     });
 
     try {
-      String? token = await storage.read(key: 'auth_token');
+      String? token = await ApiService.getAuthToken();
       final queryParameters = {
         if (category != null) 'category': category,
         if (searchQuery != null && searchQuery.isNotEmpty) 'search': searchQuery,

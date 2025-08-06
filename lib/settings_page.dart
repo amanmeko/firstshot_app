@@ -214,7 +214,10 @@ class _SettingsPageState extends State<SettingsPage> {
                     'assets/icons/profileicon.svg',
                     'Profile',
                     'Edit User Profile',
-                    () => Navigator.pushNamed(context, '/profile'),
+                    () => Navigator.pushNamed(context, '/profile').then((_) {
+                      // Return true to indicate profile might have been updated
+                      Navigator.pop(context, true);
+                    }),
                   ),
                   _buildSettingItem(
                     'assets/icons/transicon.svg',

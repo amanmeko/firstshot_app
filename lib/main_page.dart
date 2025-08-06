@@ -48,12 +48,15 @@ class _MainPageState extends State<MainPage> {
   Future<void> _checkAuthStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token');
+    print('MainPage: Retrieved token: $token');
     if (token == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        Navigator.pushReplacementNamed(context, '/login');
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/login');
+        }
       });
     } else {
-      Provider.of<UserProfile>(context, listen: false).loadProfileData();
+      await Provider.of<UserProfile>(context, listen: false).loadProfileData();
     }
   }
 
@@ -97,225 +100,240 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<UserProfile>(
-      builder: (context, userProfile, child) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.only(bottom: 80),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Stack(
+    return FutureBuilder(
+      future: Provider.of<UserProfile>(context, listen: false).loadProfileData(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF4997D0)),
+          );
+        }
+        if (snapshot.hasError) {
+          print('HomePage: Error loading profile: ${snapshot.error}');
+          return const Center(
+            child: Text('Error loading profile', style: TextStyle(color: Colors.red)),
+          );
+        }
+        return Consumer<UserProfile>(
+          builder: (context, userProfile, child) {
+            print('HomePage: Building with name=${userProfile.name}, '
+                'level=${userProfile.level}, avatarUrl=${userProfile.avatarUrl}, '
+                'memberSince=${userProfile.memberSince}');
+            return SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: 80),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ClipPath(
-                    clipper: CurvedHeaderClipper(),
-                    child: Container(
-                      height: 150,
-                      width: double.infinity,
-                      color: Colors.black12,
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 30, 20, 16),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Column(
+                  Stack(
+                    children: [
+                      ClipPath(
+                        clipper: CurvedHeaderClipper(),
+                        child: Container(
+                          height: 150,
+                          width: double.infinity,
+                          color: Colors.black12,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 30, 20, 16),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            GestureDetector(
-                              onTap: () async {
-                                final result = await Navigator.pushNamed(context, '/settings');
-                                if (result == true) {
-                                  await Provider.of<UserProfile>(context, listen: false).loadProfileData();
-                                }
-                              },
-                              child: CircleAvatar(
-                                radius: 38,
-                                backgroundColor: Colors.grey[200],
-                                backgroundImage: userProfile.avatarUrl.isNotEmpty
-                                    ? NetworkImage('${userProfile.avatarUrl}?${DateTime.now().millisecondsSinceEpoch}')
-                                    : const AssetImage('assets/icons/avatar.png') as ImageProvider,
-                                onBackgroundImageError: userProfile.avatarUrl.isNotEmpty
-                                    ? (error, stackTrace) {
-                                        print('Avatar Load Error: $error, URL: ${userProfile.avatarUrl}');
-                                        Provider.of<UserProfile>(context, listen: false).updateProfileData(
-                                          name: userProfile.name,
-                                          email: userProfile.email,
-                                          mobileNo: userProfile.mobileNo,
-                                          duprId: userProfile.duprId,
-                                          level: userProfile.level,
-                                          location: userProfile.location,
-                                          avatarUrl: '',
-                                          memberSince: userProfile.memberSince,
-                                        );
-                                      }
-                                    : null,
-                              ),
+                            Column(
+                              children: [
+                                GestureDetector(
+                                  onTap: () async {
+                                    final result = await Navigator.pushNamed(context, '/settings');
+                                    if (result == true) {
+                                      await Provider.of<UserProfile>(context, listen: false).loadProfileData();
+                                    }
+                                  },
+                                  child: CircleAvatar(
+                                    radius: 38,
+                                    backgroundColor: Colors.grey[200],
+                                    backgroundImage: userProfile.avatarUrl.isNotEmpty
+                                        ? NetworkImage(userProfile.avatarUrl)
+                                        : const AssetImage('assets/icons/avatar.png') as ImageProvider,
+                                    onBackgroundImageError: userProfile.avatarUrl.isNotEmpty
+                                        ? (error, stackTrace) {
+                                            print('Avatar Load Error: $error, URL: ${userProfile.avatarUrl}');
+                                          }
+                                        : null,
+                                    child: userProfile.avatarUrl.isEmpty && userProfile.name.isNotEmpty
+                                        ? Text(
+                                            userProfile.name[0].toUpperCase(),
+                                            style: const TextStyle(fontSize: 24, color: Colors.black54),
+                                          )
+                                        : null,
+                                  ),
+                                ),
+                                const SizedBox(height: 15),
+                                Text(
+                                  userProfile.name.isNotEmpty ? userProfile.name : 'User',
+                                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                                ),
+                                Text(
+                                  "Member Since: ${userProfile.memberSince.isNotEmpty ? userProfile.memberSince : 'N/A'}",
+                                  style: const TextStyle(color: Colors.black, fontSize: 12),
+                                ),
+                                Text(
+                                  "Level: ${userProfile.level.isNotEmpty ? userProfile.level : 'N/A'}",
+                                  style: const TextStyle(color: Colors.black, fontSize: 12),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 15),
-                            Text(
-                              userProfile.name,
-                              style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              "Member Since: ${userProfile.memberSince}",
-                              style: const TextStyle(color: Colors.black, fontSize: 12),
-                            ),
-                            Text(
-                              "Level: ${userProfile.level.isNotEmpty ? userProfile.level : 'N/A'}",
-                              style: const TextStyle(color: Colors.black, fontSize: 12),
+                            const Spacer(),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: SvgPicture.asset('assets/images/logo2.svg', height: 75),
                             ),
                           ],
                         ),
-                        const Spacer(),
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: SvgPicture.asset('assets/images/logo2.svg', height: 75),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: TextField(
+                      style: const TextStyle(fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Search by Booking No, Players, Events...',
+                        hintStyle: const TextStyle(color: Colors.black45),
+                        prefixIcon: const Icon(Icons.search, color: Color(0xFF4997D0)),
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(30),
+                          borderSide: const BorderSide(color: Color(0xFF4997D0), width: 1),
                         ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(30),
+                          borderSide: const BorderSide(color: Color(0xFF4997D0), width: 2),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 60,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF131A1C), Color(0xFF26405E)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                            ),
+                            child: ElevatedButton.icon(
+                              onPressed: () => Navigator.pushNamed(context, '/booking'),
+                              icon: const Icon(Icons.book_online, color: Colors.white),
+                              label: const Text("Book Courts", style: TextStyle(fontSize: 16)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.transparent,
+                                foregroundColor: Colors.white,
+                                shadowColor: Colors.transparent,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Container(
+                            height: 60,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF131A1C), Color(0xFF26405E)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                            ),
+                            child: ElevatedButton.icon(
+                              onPressed: () => Navigator.pushNamed(context, '/coaching'),
+                              icon: const Icon(Icons.leaderboard, color: Colors.white),
+                              label: const Text("Coaching Program", style: TextStyle(fontSize: 16)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.transparent,
+                                foregroundColor: Colors.white,
+                                shadowColor: Colors.transparent,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Events", style: TextStyle(fontWeight: FontWeight.bold)),
+                        GestureDetector(
+                          onTap: () => Navigator.pushNamed(context, '/event'),
+                          child: const Text("See All >>", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 210,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      children: [
+                        _buildEventItem(context, 'assets/images/event1.svg', '12 Jun', 'Beginner Bootcamp: Join our Pickleball Beginner Bootcamp'),
+                        _buildEventItem(context, 'assets/images/event2.svg', '25 Aug', 'Join our weekly challenge'),
+                        _buildEventItem(context, 'assets/images/event3.svg', '01 Aug', 'Exclusive members tournament'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Merchandise", style: TextStyle(fontWeight: FontWeight.bold)),
+                        GestureDetector(
+                          onTap: () => Navigator.pushNamed(context, '/merchandise'),
+                          child: const Text("See All >>", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 250,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      children: [
+                        _buildMerchItem(context, 'assets/images/paddle_m5.svg', "Pickleball Paddle", "RM 87.99", "5% Members Discount"),
+                        _buildMerchItem(context, 'assets/images/ball_set.svg', "Ball Set Premium", "RM 45.50", "10% Off Today"),
+                        _buildMerchItem(context, 'assets/images/bag_pro.svg', "Pro Carry Bag", "RM 150.00", "Free Shipping"),
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: TextField(
-                  style: const TextStyle(fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: 'Search by Booking No, Players, Events...',
-                    hintStyle: const TextStyle(color: Colors.black45),
-                    prefixIcon: const Icon(Icons.search, color: Color(0xFF4997D0)),
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: const BorderSide(color: Color(0xFF4997D0), width: 1),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: const BorderSide(color: Color(0xFF4997D0), width: 2),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        height: 60,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF131A1C), Color(0xFF26405E)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: () => Navigator.pushNamed(context, '/booking'),
-                          icon: const Icon(Icons.book_online, color: Colors.white),
-                          label: const Text("Book Courts", style: TextStyle(fontSize: 16)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            shadowColor: Colors.transparent,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Container(
-                        height: 60,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF131A1C), Color(0xFF26405E)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: () => Navigator.pushNamed(context, '/coaching'),
-                          icon: const Icon(Icons.leaderboard, color: Colors.white),
-                          label: const Text("Coaching Program", style: TextStyle(fontSize: 16)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            shadowColor: Colors.transparent,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("Events", style: TextStyle(fontWeight: FontWeight.bold)),
-                    GestureDetector(
-                      onTap: () => Navigator.pushNamed(context, '/event'),
-                      child: const Text("See All >>", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 210,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  children: [
-                    _buildEventItem(context, 'assets/images/event1.svg', '12 Jun', 'Beginner Bootcamp: Join our Pickleball Beginner Bootcamp'),
-                    _buildEventItem(context, 'assets/images/event2.svg', '25 Aug', 'Join our weekly challenge'),
-                    _buildEventItem(context, 'assets/images/event3.svg', '01 Aug', 'Exclusive members tournament'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("Merchandise", style: TextStyle(fontWeight: FontWeight.bold)),
-                    GestureDetector(
-                      onTap: () => Navigator.pushNamed(context, '/merchandise'),
-                      child: const Text("See All >>", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 250,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  children: [
-                    _buildMerchItem(context, 'assets/images/paddle_m5.svg', "Pickleball Paddle", "RM 87.99", "5% Members Discount"),
-                    _buildMerchItem(context, 'assets/images/ball_set.svg', "Ball Set Premium", "RM 45.50", "10% Off Today"),
-                    _buildMerchItem(context, 'assets/images/bag_pro.svg', "Pro Carry Bag", "RM 150.00", "Free Shipping"),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );

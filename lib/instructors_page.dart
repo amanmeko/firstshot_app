@@ -3,8 +3,11 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'dart:math';
+import 'package:provider/provider.dart';
+import 'user_profile.dart';
+import 'services/api_service.dart';
 
 class Course {
   final int id;
@@ -29,14 +32,14 @@ class Course {
 
   factory Course.fromJson(Map<String, dynamic> json) {
     return Course(
-      id: json['id'],
-      coachId: json['coach_id'],
-      name: json['name'],
-      duration: json['duration'],
-      price: double.parse(json['price'].toString()),
-      type: json['type'],
-      createdAt: json['created_at'],
-      updatedAt: json['updated_at'],
+      id: json['id'] ?? 0,
+      coachId: json['coach_id'] ?? 0,
+      name: json['name']?.toString() ?? 'Unknown Course',
+      duration: json['duration']?.toString() ?? '',
+      price: double.tryParse(json['price']?.toString() ?? '0.0') ?? 0.0,
+      type: json['type']?.toString() ?? 'unknown',
+      createdAt: json['created_at']?.toString() ?? '',
+      updatedAt: json['updated_at']?.toString() ?? '',
     );
   }
 }
@@ -70,16 +73,16 @@ class Coach {
 
   factory Coach.fromJson(Map<String, dynamic> json) {
     return Coach(
-      id: json['id'],
-      name: json['name'],
-      mobileNo: json['mobile_no'],
-      dateOfBirth: json['date_of_birth'],
-      level: json['level'],
-      duprId: json['dupr_id'],
-      avatar: json['avatar'],
-      experiences: json['experiences'],
-      createdAt: json['created_at'],
-      updatedAt: json['updated_at'],
+      id: json['id'] ?? 0,
+      name: json['name']?.toString() ?? 'Unknown Coach',
+      mobileNo: json['mobile_no']?.toString(),
+      dateOfBirth: json['date_of_birth']?.toString(),
+      level: json['level']?.toString(),
+      duprId: json['dupr_id']?.toString(),
+      avatar: json['avatar']?.toString(),
+      experiences: json['experiences']?.toString(),
+      createdAt: json['created_at']?.toString(),
+      updatedAt: json['updated_at']?.toString(),
       courses: (json['courses'] as List<dynamic>?)
               ?.map((courseJson) => Course.fromJson(courseJson))
               .toList() ??
@@ -98,7 +101,11 @@ class Coach {
   }
 
   String? get avatarUrl {
-    return avatar != null ? 'https://firstshot.my/public/storage/$avatar' : null;
+    return avatar != null && avatar!.isNotEmpty
+        ? (avatar!.startsWith('http')
+            ? avatar
+            : 'https://firstshot.my/public/storage/$avatar')
+        : null;
   }
 }
 
@@ -109,7 +116,8 @@ class InstructorsPage extends StatefulWidget {
   State<InstructorsPage> createState() => _InstructorsPageState();
 }
 
-class _InstructorsPageState extends State<InstructorsPage> with TickerProviderStateMixin {
+class _InstructorsPageState extends State<InstructorsPage>
+    with TickerProviderStateMixin {
   List<Coach> instructors = [];
   List<Coach> filteredInstructors = [];
   String? selectedCoachingType;
@@ -118,23 +126,27 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
   final storage = FlutterSecureStorage();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  late List<AnimationController> _controllers;
+  late List<AnimationController> _animationControllers;
+  late List<Animation<double>> _fadeAnimations;
 
   @override
   void initState() {
     super.initState();
-    _controllers = [];
+    _animationControllers = [];
+    _fadeAnimations = [];
     _fetchCoaches();
     _searchController.addListener(_onSearchChanged);
+    print('InstructorsPage: Initialized');
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
-    for (var controller in _controllers) {
+    for (var controller in _animationControllers) {
       controller.dispose();
     }
+    print('InstructorsPage: Disposed');
     super.dispose();
   }
 
@@ -148,7 +160,25 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
             coach.courses.any((course) => course.type == selectedCoachingType);
         return matchesName && matchesType;
       }).toList();
+      _setupAnimations();
     });
+  }
+
+  void _setupAnimations() {
+    for (var controller in _animationControllers) {
+      controller.dispose();
+    }
+    _animationControllers = List.generate(
+      filteredInstructors.length,
+      (index) => AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 500),
+      )..forward(),
+    );
+    _fadeAnimations = _animationControllers
+        .map((controller) => Tween<double>(begin: 0.0, end: 1.0).animate(
+            CurvedAnimation(parent: controller, curve: Curves.easeInOut)))
+        .toList();
   }
 
   Future<void> _fetchCoaches({String? type, int page = 1}) async {
@@ -158,20 +188,16 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
     });
 
     try {
-      String? token = await storage.read(key: 'auth_token');
-      print('Retrieved token: $token');
+      String? token = await ApiService.getAuthToken();
+      print('InstructorsPage: Retrieved token: $token');
       if (token == null) {
-        // setState(() {
-        //   isLoading = false;
-        //   errorMessage = 'No authentication token found. Please log in again.';
-        // });
-        // ScaffoldMessenger.of(context).showSnackBar(
-        //   const SnackBar(content: Text('Session expired. Please log in again.')),
-        // );
-        // await Future.delayed(const Duration(seconds: 2));
-        // if (mounted) {
-        //   Navigator.pushReplacementNamed(context, '/login');
-        // }
+        setState(() {
+          isLoading = false;
+          errorMessage = 'No authentication token found. Please log in again.';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Session expired. Please log in again.')),
+        );
         return;
       }
 
@@ -186,31 +212,28 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
         uri,
         headers: {
           'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
         },
       );
 
-      // print('Response status (type=$type, page=$page): ${response.statusCode}');
-      // print('Response body: ${response.body}');
+      print('InstructorsPage: Response status (type=$type, page=$page): ${response.statusCode}');
+      print('InstructorsPage: Response body: ${response.body}');
 
       if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        if (jsonData['success'] == true) {
+        final jsonData = jsonDecode(response.body);
+        final coachData = jsonData['data'] ?? jsonData['coaches'] ?? jsonData;
+        if (jsonData['success'] == true || coachData is List) {
           setState(() {
-            instructors = (jsonData['data'] as List)
+            instructors = (coachData as List)
                 .map((json) => Coach.fromJson(json))
                 .toList();
             filteredInstructors = instructors;
             if (_searchController.text.isNotEmpty || selectedCoachingType != null) {
               _onSearchChanged();
+            } else {
+              _setupAnimations();
             }
             isLoading = false;
-            _controllers = List.generate(
-              instructors.length,
-              (index) => AnimationController(
-                vsync: this,
-                duration: const Duration(seconds: 1),
-              ),
-            );
           });
         } else {
           setState(() {
@@ -227,10 +250,7 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
           const SnackBar(content: Text('Invalid session. Please log in again.')),
         );
         await storage.delete(key: 'auth_token');
-        await Future.delayed(const Duration(seconds: 2));
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/login');
-        }
+        return;
       } else {
         setState(() {
           isLoading = false;
@@ -242,41 +262,128 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
         isLoading = false;
         errorMessage = 'Error fetching coaches: $e';
       });
-      print('Error: $e');
+      print('InstructorsPage: Error: $e');
     }
   }
 
-  void _startSpin(int index) {
-    if (index < _controllers.length) {
-      _controllers[index].forward(from: 0.0);
-    }
+  void _navigateToCoachingInfo(BuildContext context, Coach coach) {
+    print('InstructorsPage: Navigating to /classbookinginfo for coach: ${coach.name}');
+    Navigator.pushNamed(
+      context,
+      '/classbookinginfo',
+      arguments: coach,
+    );
   }
 
-  void _navigateToCoachingInfo(BuildContext context) {
-    Navigator.pushNamed(context, '/classbookinginfo');
+  void _navigateToCoachProfile(BuildContext context, Coach coach) {
+    print('InstructorsPage: Navigating to /coach_profile for coach: ${coach.name}');
+    Navigator.pushNamed(
+      context,
+      '/coach_profile',
+      arguments: coach,
+    );
+  }
+
+  void _showFilterModal(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text('All', style: TextStyle(fontWeight: FontWeight.w600)),
+              onTap: () {
+                setState(() {
+                  selectedCoachingType = null;
+                  _onSearchChanged();
+                  _fetchCoaches();
+                });
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              title: const Text('Private', style: TextStyle(fontWeight: FontWeight.w600)),
+              onTap: () {
+                setState(() {
+                  selectedCoachingType = 'private';
+                  _onSearchChanged();
+                  _fetchCoaches(type: 'private');
+                });
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              title: const Text('Group', style: TextStyle(fontWeight: FontWeight.w600)),
+              onTap: () {
+                setState(() {
+                  selectedCoachingType = 'group';
+                  _onSearchChanged();
+                  _fetchCoaches(type: 'group');
+                });
+                Navigator.pop(context);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF9FBFD),
+      appBar: AppBar(
+        title: const Text(
+          'Instructors',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF4997D0), Color(0xFF6AB4E8)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () async {
+            print('InstructorsPage: Back button pressed, navigating to /main');
+            String? token = await ApiService.getAuthToken();
+            if (token != null) {
+              Navigator.pushReplacementNamed(context, '/main');
+            } else {
+              print('InstructorsPage: No token found, redirecting to /login');
+              Navigator.pushReplacementNamed(context, '/login');
+            }
+          },
+          tooltip: 'Back to Home',
+        ),
+      ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top Bar with Back and Search
+            // Search Bar and Filter
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.black87),
-                    onPressed: () => Navigator.pop(context),
-                  ),
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: Colors.white.withOpacity(0.9),
                         borderRadius: BorderRadius.circular(30),
                         boxShadow: [
                           BoxShadow(
@@ -291,11 +398,11 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
                         focusNode: _searchFocusNode,
                         decoration: InputDecoration(
                           hintText: 'Search instructors...',
-                          hintStyle: TextStyle(color: Colors.grey.shade500),
-                          prefixIcon: Icon(Icons.search, color: Colors.grey.shade500),
+                          hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 16),
+                          prefixIcon: Icon(Icons.search, color: Colors.grey.shade500, size: 20),
                           suffixIcon: _searchController.text.isNotEmpty
                               ? IconButton(
-                                  icon: Icon(Icons.clear, color: Colors.grey.shade500),
+                                  icon: Icon(Icons.clear, color: Colors.grey.shade500, size: 20),
                                   onPressed: () {
                                     _searchController.clear();
                                     _searchFocusNode.requestFocus();
@@ -310,200 +417,142 @@ class _InstructorsPageState extends State<InstructorsPage> with TickerProviderSt
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(30),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                  GestureDetector(
+                    onTap: () => _showFilterModal(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(15),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: SvgPicture.asset(
+                        'assets/icons/filter.svg',
+                        width: 24,
+                        height: 24,
+                        color: const Color(0xFF4997D0),
+                      ),
                     ),
-                    child: const Icon(Icons.more_horiz, color: Colors.black87, size: 20),
                   ),
                 ],
               ),
             ),
-
-            // Coaching Type Dropdown
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(30),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: DropdownButtonFormField<String>(
-                  value: selectedCoachingType,
-                  decoration: InputDecoration(
-                    prefixIcon: Icon(Icons.sports_tennis, color: Colors.grey.shade500),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-                  ),
-                  hint: const Text('Select Coaching Type', style: TextStyle(color: Colors.grey)),
-                  items: const [
-                    DropdownMenuItem<String>(
-                      value: null,
-                      child: Text('All', style: TextStyle(color: Colors.black87)),
-                    ),
-                    DropdownMenuItem<String>(
-                      value: 'private',
-                      child: Text('Private', style: TextStyle(color: Colors.black87)),
-                    ),
-                    DropdownMenuItem<String>(
-                      value: 'group',
-                      child: Text('Group', style: TextStyle(color: Colors.black87)),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      selectedCoachingType = value;
-                      _onSearchChanged();
-                    });
-                    _fetchCoaches(type: value);
-                  },
-                  dropdownColor: Colors.white,
-                  icon: Icon(Icons.arrow_drop_down, color: Colors.grey.shade500),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            // Coaches Horizontal List
+            // Coaches List
             Expanded(
               child: isLoading
                   ? const Center(child: CircularProgressIndicator(color: Color(0xFF4997D0)))
                   : errorMessage != null
-                      ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)))
+                      ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 16)))
                       : filteredInstructors.isEmpty
-                          ? const Center(child: Text('No instructors found', style: TextStyle(color: Colors.grey)))
+                          ? const Center(child: Text('No instructors found', style: TextStyle(color: Colors.grey, fontSize: 16)))
                           : ListView.builder(
-                              scrollDirection: Axis.horizontal,
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                               itemCount: filteredInstructors.length,
                               itemBuilder: (context, index) {
                                 final coach = filteredInstructors[index];
-                                return Container(
-                                  width: 280, // Fixed width for each list item
-                                  margin: const EdgeInsets.only(right: 12),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(20),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.1),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      // Avatar
-                                      Expanded(
-                                        flex: 3,
-                                        child: ClipRRect(
-                                          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                                          child: AnimatedBuilder(
-                                            animation: _controllers[index],
-                                            builder: (_, child) {
-                                              return Transform.rotate(
-                                                angle: _controllers[index].value * 2 * pi,
-                                                child: child,
-                                              );
-                                            },
-                                            child: coach.avatarUrl != null
-                                                ? CachedNetworkImage(
-                                                    imageUrl: coach.avatarUrl!,
-                                                    fit: BoxFit.cover,
-                                                    width: double.infinity,
-                                                    placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                                                    errorWidget: (context, url, error) {
-                                                      print('Image load error for ${coach.name}: ${coach.avatarUrl} - Error: $error');
-                                                      return SvgPicture.asset(
-                                                        'assets/images/default_coach.svg',
-                                                        fit: BoxFit.cover,
-                                                        width: double.infinity,
-                                                      );
-                                                    },
-                                                  )
-                                                : SvgPicture.asset(
-                                                    'assets/images/default_coach.svg',
-                                                    fit: BoxFit.cover,
-                                                    width: double.infinity,
-                                                  ),
-                                          ),
+                                return FadeTransition(
+                                  opacity: _fadeAnimations[index],
+                                  child: Container(
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(15),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.05),
+                                          blurRadius: 10,
+                                          offset: const Offset(0, 2),
                                         ),
-                                      ),
-                                      // Details
-                                      Expanded(
-                                        flex: 2,
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(12),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      ],
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(12),
+                                      child: Row(
+                                        children: [
+                                          // Avatar with Gradient Ring
+                                          Container(
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              gradient: const LinearGradient(
+                                                colors: [Color(0xFF4997D0), Color(0xFF6AB4E8)],
+                                              ),
+                                            ),
+                                            padding: const EdgeInsets.all(2),
+                                            child: CircleAvatar(
+                                              radius: 24,
+                                              backgroundColor: Colors.grey[200],
+                                              backgroundImage: coach.avatarUrl != null
+                                                  ? CachedNetworkImageProvider(coach.avatarUrl!)
+                                                  : null,
+                                              onBackgroundImageError: coach.avatarUrl != null
+                                                  ? (error, stackTrace) {
+                                                      print('Image load error for ${coach.name}: ${coach.avatarUrl} - Error: $error');
+                                                    }
+                                                  : null,
+                                              child: coach.avatarUrl == null || coach.avatarUrl!.isEmpty
+                                                  ? Text(
+                                                      coach.name.isNotEmpty ? coach.name[0].toUpperCase() : 'C',
+                                                      style: const TextStyle(fontSize: 18, color: Colors.black54),
+                                                    )
+                                                  : null,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          // Coach Info
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  coach.name,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 16,
+                                                    color: Colors.black87,
+                                                  ),
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  coach.coachingType,
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    color: Colors.grey.shade600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          // Action Buttons
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              Text(
-                                                coach.name,
-                                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                                overflow: TextOverflow.ellipsis,
+                                              IconButton(
+                                                onPressed: () => _navigateToCoachProfile(context, coach),
+                                                icon: const Icon(Icons.person, color: Color(0xFF4997D0), size: 20),
+                                                tooltip: 'View Profile',
                                               ),
-                                              Text(
-                                                coach.coachingType,
-                                                style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Row(
-                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                children: [
-                                                  Expanded(
-                                                    child: ElevatedButton(
-                                                      onPressed: () => _startSpin(index),
-                                                      style: ElevatedButton.styleFrom(
-                                                        backgroundColor: const Color(0xFF4997D0),
-                                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                                      ),
-                                                      child: const Text('View Profile', style: TextStyle(fontSize: 12, color: Colors.white)),
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                  Expanded(
-                                                    child: ElevatedButton(
-                                                      onPressed: () => _navigateToCoachingInfo(context),
-                                                      style: ElevatedButton.styleFrom(
-                                                        backgroundColor: Colors.black,
-                                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                                      ),
-                                                      child: const Text('Coaching Info', style: TextStyle(fontSize: 12, color: Colors.white)),
-                                                    ),
-                                                  ),
-                                                ],
+                                              IconButton(
+                                                onPressed: () => _navigateToCoachingInfo(context, coach),
+                                                icon: const Icon(Icons.info, color: Colors.black87, size: 20),
+                                                tooltip: 'Coaching Info',
                                               ),
                                             ],
                                           ),
-                                        ),
+                                        ],
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 );
                               },
                             ),
+                            
             ),
           ],
         ),

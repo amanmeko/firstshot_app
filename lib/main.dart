@@ -25,18 +25,20 @@ import 'forgot_password.dart';
 import 'profile_page.dart';
 import 'edit_profile_page.dart';
 import 'newsinfo.dart';
-import 'package:firstshot_app/forgot_password.dart';
+
+// Friends Screens
+import 'add_friends_page.dart';
+import 'friend_requests_page.dart';
 
 // Booking & Coaching
 import 'booking_page.dart';
 import 'checkout_page.dart';
 import 'coaching_select.dart';
 import 'group_lesson.dart';
-import 'groupclass.dart' as group;
-import 'privateclass.dart'; // Legacy, optional
 import 'private_lesson_page.dart';
 import 'class_booking_info.dart';
 import 'instructors_page.dart';
+import 'CoachProfilePage.dart';
 
 // Game & Match
 import 'game_match_page.dart';
@@ -50,15 +52,16 @@ import 'credit_transfer_success.dart';
 import 'productcheckout.dart';
 import 'listproducts.dart';
 
-
-// e-Shop
-import 'listproducts.dart';
-
-void main() {
-  runApp( ChangeNotifierProvider(
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Firebase initialization removed - now using Laravel backend
+  
+  runApp(
+    ChangeNotifierProvider(
       create: (context) => UserProfile()..loadProfileData(),
       child: const MyApp(),
-    ),);
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -86,12 +89,16 @@ class MyApp extends StatelessWidget {
 
         // Main
         '/main': (context) => const MainPage(),
-         '/event': (context) => const ListEventsPage(),
+        '/event': (context) => const ListEventsPage(),
 
         // Profile & Settings
         '/settings': (context) => const SettingsPage(),
         '/profile': (context) => const ProfilePage(),
         '/editprofile': (context) => const EditProfilePage(),
+
+        // Friends
+        '/add_friends': (context) => const AddFriendsPage(),
+        '/friend_requests': (context) => const FriendRequestsPage(),
 
         // Info Pages
         '/about': (context) => const AboutUsPage(),
@@ -104,8 +111,6 @@ class MyApp extends StatelessWidget {
         '/forgot': (context) => const ForgotPasswordPage(),
         '/gamematchset': (context) => const GameMatchSetPage(),
 
-
-
         // Booking
         '/booking': (context) => const BookingPage(),
         '/checkout': (context) => const CheckoutPage(),
@@ -114,12 +119,11 @@ class MyApp extends StatelessWidget {
 
         // Coaching
         '/coaching': (context) => const CoachingSelect(),
-        '/groupclass': (context) => const GroupLesson(),
-        '/privateclass': (context) => const PrivateClass(), // optional
+        '/groupclass': (context) => const GroupLessonScreen(),
         '/private-lesson': (context) => const PrivateLessonPage(),
+        '/coach_profile': (context) => const CoachProfilePage(),
 
         // Matchmaking
-        // '/matchmaking': (context) => const GameMatchPage(),
         '/createMatch': (context) => const CreateMatchPage(),
 
         // Transactions
@@ -127,9 +131,9 @@ class MyApp extends StatelessWidget {
         '/manage_card': (context) => const ManageCardPage(),
         '/transfer_credit': (context) => const TransferCreditPage(),
         '/credit_success': (context) => const CreditTransferSuccessPage(
-          amount: "100",
-          phone: "0123456789",
-        ),
+              amount: "100",
+              phone: "0123456789",
+            ),
 
         // e-Shop
         '/listproducts': (context) => const ListProductsPage(),

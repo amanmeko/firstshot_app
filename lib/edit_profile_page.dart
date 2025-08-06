@@ -3,6 +3,7 @@ import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -10,6 +11,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'user_profile.dart';
+import 'services/api_service.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -24,11 +26,16 @@ class _EditProfilePageState extends State<EditProfilePage> {
   final TextEditingController _mobileController = TextEditingController();
   final TextEditingController _duprIdController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _passwordConfirmController = TextEditingController();
+  final storage = FlutterSecureStorage();
   String? _selectedLevel;
   String? _selectedLocation;
   File? _avatarImage;
   bool _isLoading = false;
   bool _isDataLoaded = false;
+  bool _obscurePassword = true;
+  bool _obscurePasswordConfirm = true;
 
   final List<String> _levels = ['Beginner', 'Intermediate', 'Advanced'];
   final List<String> _locations = [
@@ -41,7 +48,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     Icons.calendar_today, Icons.assignment, Icons.home, Icons.sports_tennis, Icons.settings,
   ];
 
-  final List<String> _labels = ['Booking', 'Lessons', 'Home', 'Instructors', 'Settings'];
+  final List<String> _labels = ['Booking', 'Group Lessons', 'Home', 'Instructors', 'Settings'];
   int _selectedIndex = 4;
 
   @override
@@ -76,7 +83,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         Navigator.pushNamed(context, '/booking');
         break;
       case 1:
-        Navigator.pushNamed(context, '/coaching');
+        Navigator.pushNamed(context, '/groupclass');
         break;
       case 2:
         Navigator.pushNamed(context, '/main');
@@ -109,13 +116,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
     final name = _nameController.text.trim();
     final email = _emailController.text.trim();
     final mobile = _mobileController.text.trim();
+    final password = _passwordController.text.trim();
+    final passwordConfirm = _passwordConfirmController.text.trim();
 
     print('Form Input: name="$name", email="$email", mobile="$mobile", '
           'duprId="${_duprIdController.text.trim()}", level="$_selectedLevel", '
-          'location="$_selectedLocation", avatarImage="${_avatarImage?.path}"');
+          'location="$_selectedLocation", avatarImage="${_avatarImage?.path}", '
+          'password="${password.isEmpty ? 'not provided' : '[HIDDEN]'}", '
+          'passwordConfirm="${passwordConfirm.isEmpty ? 'not provided' : '[HIDDEN]'}"');
+
+    print('Password Comparison: password="$password", passwordConfirm="$passwordConfirm", '
+          'areEqual=${password == passwordConfirm}');
 
     if (name.isEmpty || email.isEmpty) {
       _showSnackBar('Name and email cannot be empty.');
+      return;
+    }
+
+    if (password.isNotEmpty && password != passwordConfirm) {
+      _showSnackBar('Passwords do not match.');
       return;
     }
 
@@ -128,18 +147,17 @@ class _EditProfilePageState extends State<EditProfilePage> {
       _isLoading = true;
     });
 
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('auth_token');
+        final token = await ApiService.getAuthToken();
     print('Auth Token: $token');
     if (token == null) {
       _showSnackBar('No authentication token found. Please log in again.');
       setState(() {
         _isLoading = false;
       });
+      Navigator.pushReplacementNamed(context, '/login');
       return;
     }
 
-    // Use http.put to test field submission
     final payload = {
       'name': name,
       'email': email,
@@ -147,6 +165,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       'dupr_id': _duprIdController.text.trim(),
       if (_selectedLevel != null) 'level': _selectedLevel,
       if (_selectedLocation != null) 'location': _selectedLocation,
+      if (password.isNotEmpty) 'password': password,
     };
 
     print('Sending http.put with payload: $payload');
@@ -181,24 +200,28 @@ class _EditProfilePageState extends State<EditProfilePage> {
         final responseData = jsonDecode(response.body);
         if (responseData['success'] == true) {
           final userProfile = Provider.of<UserProfile>(context, listen: false);
-          String? avatarUrl = responseData['data']['customer']?['avatar_url'];
-          if (avatarUrl != null && !avatarUrl.startsWith('http')) {
-            avatarUrl = 'https://firstshot.my/storage/$avatarUrl';
+          
+          print('Response structure: ${responseData.keys}');
+          print('Response data: ${responseData['data']}');
+          
+          final customerData = responseData['data']['customer'] ?? responseData['data'];
+          print('Customer data: $customerData');
+          
+          // Update UserProfile directly with the API response data
+          if (customerData != null) {
+            print('Updating UserProfile with: $customerData');
+            userProfile.updateFromMap(customerData);
+            await userProfile.saveToStorage();
+            
+            // Also sync from API to ensure we have the latest data
+            print('Syncing from API...');
+            await userProfile.syncFromAPI();
+          } else {
+            print('No customer data found in response');
           }
 
-          await userProfile.updateProfileData(
-            name: name,
-            email: email,
-            level: _selectedLevel ?? 'N/A',
-            mobileNo: '+60$mobile',
-            duprId: _duprIdController.text.trim(),
-            location: _selectedLocation ?? 'N/A',
-            avatarUrl: avatarUrl ?? '',
-            memberSince: responseData['data']?['created_at'] != null
-                ? DateFormat('dd.MM.yyyy').format(DateTime.parse(responseData['data']['created_at']))
-                : userProfile.memberSince,
-          );
-
+          _passwordController.clear();
+          _passwordConfirmController.clear();
           _showSnackBar('Profile updated successfully!');
           Navigator.pop(context, true);
         } else {
@@ -213,11 +236,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
             errorMessage = responseData['errors'].entries.map((e) => '${e.key}: ${e.value.join(', ')}').join(', ');
           } else if (response.statusCode == 401) {
             errorMessage = 'Unauthorized. Please log in again.';
+            await ApiService.removeAuthToken();
+            Navigator.pushReplacementNamed(context, '/login');
           }
         }
         _showSnackBar(errorMessage);
 
-        // Fallback to MultipartRequest if http.put fails
         if (response.statusCode == 422) {
           print('Trying fallback MultipartRequest');
           final request = http.MultipartRequest(
@@ -299,6 +323,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
     _mobileController.dispose();
     _duprIdController.dispose();
     _emailController.dispose();
+    _passwordController.dispose();
+    _passwordConfirmController.dispose();
     super.dispose();
   }
 
@@ -311,7 +337,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
             ? SingleChildScrollView(
                 child: Form(
                   key: _formKey,
-                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  autovalidateMode: AutovalidateMode.disabled,
                   child: Column(
                     children: [
                       Stack(
@@ -399,6 +425,24 @@ class _EditProfilePageState extends State<EditProfilePage> {
                               setState(() => _selectedLocation = value);
                             }),
                             _buildInputField("Email", _emailController, isEmail: true),
+                            _buildInputField(
+                              "New Password",
+                              _passwordController,
+                              isPassword: true,
+                              obscureText: _obscurePassword,
+                              toggleVisibility: () {
+                                setState(() => _obscurePassword = !_obscurePassword);
+                              },
+                            ),
+                            _buildInputField(
+                              "Confirm New Password",
+                              _passwordConfirmController,
+                              isPassword: true,
+                              obscureText: _obscurePasswordConfirm,
+                              toggleVisibility: () {
+                                setState(() => _obscurePasswordConfirm = !_obscurePasswordConfirm);
+                              },
+                            ),
                             const SizedBox(height: 2),
                             ElevatedButton(
                               onPressed: _isLoading ? null : _updateProfile,
@@ -458,12 +502,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 
-  Widget _buildInputField(String label, TextEditingController controller, {bool isPhone = false, bool isEmail = false}) {
+  Widget _buildInputField(
+    String label,
+    TextEditingController controller, {
+    bool isPhone = false,
+    bool isEmail = false,
+    bool isPassword = false,
+    bool obscureText = false,
+    VoidCallback? toggleVisibility,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0),
       child: TextFormField(
         controller: controller,
-        keyboardType: isPhone ? TextInputType.phone : isEmail ? TextInputType.emailAddress : TextInputType.text,
+        keyboardType: isPhone
+            ? TextInputType.phone
+            : isEmail
+                ? TextInputType.emailAddress
+                : TextInputType.text,
+        obscureText: isPassword ? obscureText : false,
         inputFormatters: isPhone ? [MobileNumberFormatter()] : [],
         decoration: InputDecoration(
           labelText: "$label :",
@@ -478,7 +535,20 @@ class _EditProfilePageState extends State<EditProfilePage> {
             borderSide: const BorderSide(color: Colors.blue),
           ),
           prefixText: isPhone ? '+60' : null,
-          helperText: isPhone ? "Enter a valid 9-digit Malaysian number (e.g., 123456789)" : null,
+          helperText: isPhone
+              ? "Enter a valid 9-digit Malaysian number (e.g., 123456789)"
+              : isPassword
+                  ? "Leave blank to keep current password"
+                  : null,
+          suffixIcon: isPassword
+              ? IconButton(
+                  icon: Icon(
+                    obscureText ? Icons.visibility_off : Icons.visibility,
+                    color: Colors.brown,
+                  ),
+                  onPressed: toggleVisibility,
+                )
+              : null,
         ),
         validator: (value) {
           final trimmedValue = value?.trim() ?? '';
@@ -498,6 +568,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
             final pattern = RegExp(r'^\d{9}$');
             if (!pattern.hasMatch(cleaned)) {
               return "Enter a valid 9-digit Malaysian mobile number (e.g., 123456789)";
+            }
+          }
+          if (label == "New Password" && trimmedValue.isNotEmpty && trimmedValue.length < 6) {
+            return 'Password must be at least 6 characters.';
+          }
+          if (label == "Confirm New Password" && trimmedValue.isNotEmpty && _passwordController.text.trim().isNotEmpty) {
+            if (trimmedValue != _passwordController.text.trim()) {
+              return 'Passwords do not match.';
             }
           }
           return null;

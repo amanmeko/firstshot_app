@@ -4,10 +4,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:provider/provider.dart';
 import 'services/api_service.dart';
-import 'user_profile.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -24,7 +21,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _passwordConfirmController = TextEditingController();
-  final storage = const FlutterSecureStorage();
   bool _isLoading = false;
 
   void _pickDate() async {
@@ -95,49 +91,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         if (response.statusCode == 200 || response.statusCode == 201) {
           final responseData = jsonDecode(response.body);
-          final token = responseData['data']['access_token'];
-          final userData = responseData['data']['customer'];
+          final token = responseData['data']?['access_token'];
+          if (token != null) {
+            final prefs = await SharedPreferences.getInstance();
+            final name = responseData['data']['customer']['name']?.trim() ?? 'User';
+            final apiLevel = responseData['data']['customer']['level'] ?? 'N/A';
+            final validLevel = ['Beginner', 'Intermediate', 'Advanced'].contains(apiLevel) ? apiLevel : 'N/A';
+            final apiLocation = responseData['data']['customer']['location'] ?? 'N/A';
+            final validLocation = [
+              'Kuala Lumpur', 'Putrajaya', 'Johor', 'Kedah', 'Kelantan', 'Malacca',
+              'Negeri Sembilan', 'Pahang', 'Perak', 'Perlis', 'Penang', 'Sabah',
+              'Sarawak', 'Terengganu', 'Labuan'
+            ].contains(apiLocation) ? apiLocation : 'N/A';
 
-          if (token != null && userData != null) {
-            // Save authentication token
-            await ApiService.saveAuthToken(token);
-            
-            // Save user data to secure storage
-            await storage.write(key: 'user_id', value: userData['id']?.toString() ?? '');
-            await storage.write(key: 'customer_id', value: userData['customer_id']?.toString() ?? '');
-            await storage.write(key: 'user_name', value: userData['name']?.toString() ?? '');
-            await storage.write(key: 'email', value: userData['email']?.toString() ?? '');
-            await storage.write(key: 'mobile_no', value: userData['mobile_no']?.toString() ?? '');
-            await storage.write(key: 'level', value: userData['level']?.toString() ?? 'Beginner');
-            await storage.write(key: 'location', value: userData['location']?.toString() ?? 'Not set');
-            await storage.write(key: 'dupr_id', value: userData['dupr_id']?.toString() ?? '');
-            await storage.write(key: 'avatar_url', value: userData['avatar_url']?.toString() ?? '');
-            await storage.write(key: 'about', value: userData['about']?.toString() ?? '');
-            await storage.write(key: 'credit_balance', value: userData['credit_balance']?.toString() ?? '0');
-            await storage.write(key: 'suspend', value: userData['suspend']?.toString() ?? 'false');
-            
-            if (userData['created_at'] != null) {
-              await storage.write(key: 'created_at', value: userData['created_at'].toString());
-            }
-            if (userData['updated_at'] != null) {
-              await storage.write(key: 'updated_at', value: userData['updated_at'].toString());
-            }
-
-            // Update UserProfile provider
-            if (mounted) {
-              final userProfile = Provider.of<UserProfile>(context, listen: false);
-              userProfile.updateFromMap(userData);
-              await userProfile.saveToStorage();
-            }
-
-            print('Registration successful for user: ${userData['name']}');
-
-            if (mounted) {
-              Navigator.pushReplacementNamed(context, '/main');
-            }
-          } else {
-            _showErrorSnackBar('Registration successful, but no token received. Please try logging in.');
+            await prefs.setString('auth_token', token);
+            await prefs.setString('user_name', name);
+            await prefs.setString('member_since', responseData['data']['customer']['created_at'] ?? '');
+            await prefs.setString('pickleball_level', validLevel);
+            await prefs.setString('avatar_url', responseData['data']['customer']['avatar_url'] ?? '');
+            await prefs.setString('mobile_no', responseData['data']['customer']['mobile_no'] ?? '');
+            await prefs.setString('email', responseData['data']['customer']['email'] ?? '');
+            await prefs.setString('dupr_id', responseData['data']['customer']['dupr_id'] ?? '');
+            await prefs.setString('location', validLocation);
           }
+          
+          Navigator.pushNamed(context, '/main', arguments: cleanedMobile);
         } else {
           final errorData = jsonDecode(response.body);
           final errorMessage = errorData['message'] ?? 'Registration failed. Please try again.';
