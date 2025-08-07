@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'booking_details.dart';
 
 class ReceiptScreen extends StatelessWidget {
   const ReceiptScreen({super.key});
@@ -118,10 +117,8 @@ class ReceiptScreen extends StatelessWidget {
               // Go to Booking Details
               ElevatedButton(
                 onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const BookingDetailsPage()),
-                  );
+                  // Since this is a receipt page, we'll navigate to the booking list instead
+                  Navigator.pushNamed(context, '/booking-list');
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF4997D0),
@@ -129,7 +126,7 @@ class ReceiptScreen extends StatelessWidget {
                 ),
                 child: const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  child: Text('Go to Booking Details', style: TextStyle(color: Colors.white)),
+                  child: Text('View My Bookings', style: TextStyle(color: Colors.white)),
                 ),
               ),
 

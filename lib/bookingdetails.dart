@@ -1,9 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:intl/intl.dart';
+import 'services/booking_service.dart';
+import 'models/court.dart';
 
 class BookingDetailsPage extends StatefulWidget {
-  const BookingDetailsPage({super.key});
+  final Court selectedCourt;
+  final DateTime selectedDate;
+  final TimeOfDay selectedTime;
+  final String selectedDuration;
+  final int customerId;
+
+  const BookingDetailsPage({
+    super.key,
+    required this.selectedCourt,
+    required this.selectedDate,
+    required this.selectedTime,
+    required this.selectedDuration,
+    required this.customerId,
+  });
 
   @override
   State<BookingDetailsPage> createState() => _BookingDetailsPageState();
@@ -12,6 +28,10 @@ class BookingDetailsPage extends StatefulWidget {
 class _BookingDetailsPageState extends State<BookingDetailsPage> {
   int _selectedIndex = 0;
   final TextEditingController _voucherController = TextEditingController();
+  bool isLoading = false;
+  String? promoCodeMessage;
+  bool isPromoCodeValid = false;
+  double discount = 0.0;
 
   final Map<String, int> gearQuantities = {
     "Rent Paddles": 0,
@@ -35,23 +55,127 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
     });
   }
 
-  void _handleCheckout() {
-    final input = _voucherController.text.trim();
-    if (input.isEmpty || input == "123456") {
-      Navigator.pushNamed(context, '/checkout');
-    } else {
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text("Invalid Voucher"),
-          content: const Text("Voucher Not Valid"),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("OK"),
-            )
-          ],
-        ),
+  double get _subtotal {
+    final durationHours = int.parse(widget.selectedDuration.split(' ')[0]);
+    final basePrice = widget.selectedCourt.price * durationHours;
+    final gearPrice = gearQuantities.values.reduce((a, b) => a + b) * 15.0;
+    return basePrice + gearPrice;
+  }
+
+  double get _total {
+    return _subtotal - discount;
+  }
+
+  Future<void> _validatePromoCode() async {
+    if (_voucherController.text.trim().isEmpty) return;
+
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final response = await BookingService.validatePromoCode(
+        code: _voucherController.text.trim(),
+        subtotal: _subtotal,
+      );
+
+      setState(() {
+        isLoading = false;
+        isPromoCodeValid = response['success'];
+        promoCodeMessage = response['message'];
+        
+        if (response['success'] && response['promoCode'] != null) {
+          final promoCode = response['promoCode'];
+          if (promoCode['type'] == 'percentage') {
+            discount = (_subtotal * promoCode['value']) / 100;
+          } else {
+            discount = promoCode['value'].toDouble();
+          }
+        } else {
+          discount = 0.0;
+        }
+      });
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+        isPromoCodeValid = false;
+        promoCodeMessage = 'Error validating promo code: $e';
+        discount = 0.0;
+      });
+    }
+  }
+
+  Future<void> _handleCheckout() async {
+    if (isLoading) return;
+
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      // Calculate end time based on duration
+      final durationHours = int.parse(widget.selectedDuration.split(' ')[0]);
+      final startTime = widget.selectedTime;
+      final endTime = TimeOfDay(
+        hour: (startTime.hour + durationHours) % 24,
+        minute: startTime.minute,
+      );
+
+      print('📤 Creating booking with API:');
+      print('  - Court ID: ${widget.selectedCourt.id}');
+      print('  - Customer ID: ${widget.customerId}');
+      print('  - Date: ${DateFormat('yyyy-MM-dd').format(widget.selectedDate)}');
+      print('  - Start Time: ${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}');
+      print('  - End Time: ${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}');
+      print('  - Duration: $durationHours hours');
+      print('  - Price: $_total');
+      print('  - Promo Code: ${isPromoCodeValid ? _voucherController.text.trim() : 'None'}');
+
+      final response = await BookingService.createBooking(
+        courtId: widget.selectedCourt.id,
+        customerId: widget.customerId,
+        bookingDate: DateFormat('yyyy-MM-dd').format(widget.selectedDate),
+        startTime: '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
+        endTime: '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}',
+        price: _total,
+        paymentMethod: 'cash', // Default payment method
+        notes: 'Booking from mobile app',
+        promoCode: isPromoCodeValid ? _voucherController.text.trim() : null,
+      );
+
+      setState(() {
+        isLoading = false;
+      });
+
+      if (response['success']) {
+        // Show success dialog
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Booking Successful!'),
+            content: Text('Your booking has been confirmed. Booking ID: ${response['booking']['id']}'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context); // Close dialog
+                  Navigator.pop(context); // Go back to booking page
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(response['message'] ?? 'Booking failed')),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error creating booking: $e')),
       );
     }
   }
@@ -112,12 +236,18 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
                 ),
               ),
               const SizedBox(height: 10),
-              _buildPriceRow("Total Hours", "1 hour"),
-              _buildPriceRow("Date & Time", "05.00 AM, 06 July 2025"),
-              _buildPriceRow("Add On – Paddle 2", "RM 30"),
-              _buildPriceRow("Tax", "RM 5.60"),
+              _buildPriceRow("Total Hours", widget.selectedDuration),
+              _buildPriceRow("Court Price", "RM ${widget.selectedCourt.price * int.parse(widget.selectedDuration.split(' ')[0])}"),
+              if (gearQuantities.values.reduce((a, b) => a + b) > 0) ...[
+                for (var entry in gearQuantities.entries)
+                  if (entry.value > 0)
+                    _buildPriceRow("Add On – ${entry.key} (${entry.value})", "RM ${entry.value * 15}"),
+              ],
+              if (discount > 0) ...[
+                _buildPriceRow("Discount", "-RM ${discount.toStringAsFixed(2)}", isBold: true),
+              ],
               const Divider(thickness: 1, height: 20),
-              _buildPriceRow("Grand Total", "RM80.60", isBold: true),
+              _buildPriceRow("Grand Total", "RM ${_total.toStringAsFixed(2)}", isBold: true),
               const SizedBox(height: 16),
               _buildVoucherInput(),
               const SizedBox(height: 12),
@@ -193,11 +323,19 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
           color: const Color(0xFF4997D0),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Row(
+        child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text("Pickleball Court 5", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-            Text("RM75/hr", style: TextStyle(color: Colors.white)),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(widget.selectedCourt.name, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                Text("${DateFormat('MMM dd, yyyy').format(widget.selectedDate)} at ${widget.selectedTime.format(context)}", 
+                     style: const TextStyle(color: Colors.white, fontSize: 12)),
+                Text("Duration: ${widget.selectedDuration}", style: const TextStyle(color: Colors.white, fontSize: 12)),
+              ],
+            ),
+            Text("RM${widget.selectedCourt.price}/hr", style: const TextStyle(color: Colors.white)),
           ],
         ),
       ),
@@ -278,16 +416,52 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
   Widget _buildVoucherInput() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 30),
-      child: TextField(
-        controller: _voucherController,
-        decoration: InputDecoration(
-          hintText: "Enter your Voucher Code",
-          prefixIcon: const Icon(Icons.card_giftcard),
-          enabledBorder: OutlineInputBorder(
-            borderSide: const BorderSide(color: Colors.blueAccent),
-            borderRadius: BorderRadius.circular(12),
+      child: Column(
+        children: [
+          TextField(
+            controller: _voucherController,
+            decoration: InputDecoration(
+              hintText: "Enter your Voucher Code",
+              prefixIcon: const Icon(Icons.card_giftcard),
+              suffixIcon: isLoading 
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.check),
+                    onPressed: _validatePromoCode,
+                  ),
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: isPromoCodeValid ? Colors.green : Colors.blueAccent,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: isPromoCodeValid ? Colors.green : Colors.blueAccent,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onSubmitted: (_) => _validatePromoCode(),
           ),
-        ),
+          if (promoCodeMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              promoCodeMessage!,
+              style: TextStyle(
+                color: isPromoCodeValid ? Colors.green : Colors.red,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -296,13 +470,19 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: ElevatedButton(
-        onPressed: _handleCheckout,
+        onPressed: isLoading ? null : _handleCheckout,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF4997D0),
           minimumSize: const Size.fromHeight(50),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
-        child: const Text("Checkout Now", style: TextStyle(fontSize: 16, color: Colors.white)),
+        child: isLoading 
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            )
+          : const Text("Checkout Now", style: TextStyle(fontSize: 16, color: Colors.white)),
       ),
     );
   }

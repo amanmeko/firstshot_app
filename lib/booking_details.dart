@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:curved_navigation_bar/curved_navigation_bar.dart';
+import 'package:intl/intl.dart';
+import 'services/booking_service.dart';
 
 class BookingDetailsPage extends StatefulWidget {
-  const BookingDetailsPage({super.key});
+  final int bookingId;
+
+  const BookingDetailsPage({super.key, required this.bookingId});
 
   @override
   State<BookingDetailsPage> createState() => _BookingDetailsPageState();
@@ -11,6 +15,9 @@ class BookingDetailsPage extends StatefulWidget {
 
 class _BookingDetailsPageState extends State<BookingDetailsPage> {
   int _selectedIndex = 0;
+  Map<String, dynamic>? bookingData;
+  bool isLoading = true;
+  bool isCancelling = false;
 
   final List<String> _labels = ['Booking', 'Lessons', 'Home', 'Instructors', 'Settings'];
   final List<IconData> _icons = [
@@ -20,6 +27,69 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
     Icons.sports_tennis_rounded,
     Icons.settings,
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBookingDetails();
+  }
+
+  Future<void> _loadBookingDetails() async {
+    try {
+      final response = await BookingService.getBooking(widget.bookingId);
+      if (response['success']) {
+        setState(() {
+          bookingData = response['booking'];
+          isLoading = false;
+        });
+      } else {
+        setState(() {
+          isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(response['message'] ?? 'Failed to load booking details')),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading booking details: $e')),
+      );
+    }
+  }
+
+  Future<void> _cancelBooking() async {
+    setState(() {
+      isCancelling = true;
+    });
+
+    try {
+      final response = await BookingService.deleteBooking(widget.bookingId);
+      setState(() {
+        isCancelling = false;
+      });
+
+      if (response['success']) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Booking cancelled successfully')),
+        );
+        Navigator.pop(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(response['message'] ?? 'Failed to cancel booking')),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        isCancelling = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error cancelling booking: $e')),
+      );
+    }
+  }
 
   void _navigate(int index) {
     setState(() {
@@ -62,27 +132,33 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
         ),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            _sectionBox(
-              children: [
-                const Text("Court 2", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                const SizedBox(height: 4),
-                const Row(
-                  children: [
-                    Icon(Icons.location_pin, size: 16, color: Colors.grey),
-                    SizedBox(width: 4),
-                    Text("First Shot Pickleball Kuala Lumpur"),
-                  ],
-                ),
-                const Divider(height: 24),
-                _infoRowWithIcon(Icons.calendar_today, "Date:", "15 July 2025"),
-                const Divider(height: 24),
-                _infoRowWithIcon(Icons.access_time, "Time :", "2.00pm - 3.00 pm"),
-              ],
-            ),
+      body: isLoading 
+        ? const Center(child: CircularProgressIndicator())
+        : bookingData == null
+          ? const Center(child: Text('Booking not found'))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  _sectionBox(
+                    children: [
+                      Text(bookingData!['court']['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      const SizedBox(height: 4),
+                      const Row(
+                        children: [
+                          Icon(Icons.location_pin, size: 16, color: Colors.grey),
+                          SizedBox(width: 4),
+                          Text("First Shot Pickleball Kuala Lumpur"),
+                        ],
+                      ),
+                      const Divider(height: 24),
+                      _infoRowWithIcon(Icons.calendar_today, "Date:", 
+                        DateFormat('dd MMMM yyyy').format(DateTime.parse(bookingData!['booking_date']))),
+                      const Divider(height: 24),
+                      _infoRowWithIcon(Icons.access_time, "Time:", 
+                        "${TimeOfDay.fromDateTime(DateTime.parse(bookingData!['start_time'])).format(context)} - ${TimeOfDay.fromDateTime(DateTime.parse(bookingData!['end_time'])).format(context)}"),
+                    ],
+                  ),
             const SizedBox(height: 16),
             _sectionBox(
               children: [
@@ -120,7 +196,7 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
               children: [
 
                 const SizedBox(height: 8),
-                _infoRow("Total Paid :", "RM249"),
+                _infoRow("Total Paid :", "RM${bookingData!['price']}"),
                 const SizedBox(height: 12),
                 const Divider(height: 16),
                 ListTile(
@@ -191,13 +267,15 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
   }
 
   Widget _builderCancelButton() {
-    final DateTime bookingDate = DateTime(2025, 2, 20, 14, 00);
-    final bool canCancel = DateTime.now().difference(bookingDate).inHours < 24;
+    if (bookingData == null) return const SizedBox.shrink();
+    
+    final DateTime bookingDateTime = DateTime.parse(bookingData!['booking_date']);
+    final bool canCancel = DateTime.now().difference(bookingDateTime).inHours < 24;
 
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
-        onPressed: canCancel
+        onPressed: canCancel && !isCancelling
             ? () {
           showDialog(
             context: context,
@@ -209,9 +287,7 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
                 TextButton(
                   onPressed: () {
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Booking has been cancelled")),
-                    );
+                    _cancelBooking();
                   },
                   child: const Text("Yes"),
                 ),
@@ -220,8 +296,12 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
           );
         }
             : null,
-        icon: const Icon(Icons.cancel),
-        label: const Text("Cancel this Booking"),
+        icon: isCancelling ? const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ) : const Icon(Icons.cancel),
+        label: Text(isCancelling ? "Cancelling..." : "Cancel this Booking"),
         style: OutlinedButton.styleFrom(
           foregroundColor: canCancel ? Colors.red : Colors.grey,
           side: BorderSide(color: canCancel ? Colors.red : Colors.grey),

@@ -32,6 +32,9 @@ import 'friend_requests_page.dart';
 
 // Booking & Coaching
 import 'booking_page.dart';
+import 'bookingdetails.dart';
+import 'booking_details.dart';
+import 'booking_list_page.dart';
 import 'checkout_page.dart';
 import 'coaching_select.dart';
 import 'group_lesson.dart';
@@ -39,6 +42,7 @@ import 'private_lesson_page.dart';
 import 'class_booking_info.dart';
 import 'instructors_page.dart';
 import 'CoachProfilePage.dart';
+import 'widgets/protected_route.dart';
 
 // Game & Match
 import 'game_match_page.dart';
@@ -51,6 +55,7 @@ import 'transfer_credit_page.dart';
 import 'credit_transfer_success.dart';
 import 'productcheckout.dart';
 import 'listproducts.dart';
+import 'receipt.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -111,11 +116,27 @@ class MyApp extends StatelessWidget {
         '/forgot': (context) => const ForgotPasswordPage(),
         '/gamematchset': (context) => const GameMatchSetPage(),
 
-        // Booking
-        '/booking': (context) => const BookingPage(),
-        '/checkout': (context) => const CheckoutPage(),
-        '/classbookinginfo': (context) => const ClassBookingInfoPage(),
-        '/productcheckout': (context) => const ProductCheckoutPage(),
+        // Booking (Protected Routes)
+        '/booking': (context) => const ProtectedRoute(
+          routeName: 'Booking',
+          child: BookingPage(),
+        ),
+        '/booking-list': (context) => const ProtectedRoute(
+          routeName: 'Booking List',
+          child: BookingListPage(),
+        ),
+        '/checkout': (context) => const ProtectedRoute(
+          routeName: 'Checkout',
+          child: CheckoutPage(),
+        ),
+        '/classbookinginfo': (context) => const ProtectedRoute(
+          routeName: 'Class Booking',
+          child: ClassBookingInfoPage(),
+        ),
+        '/productcheckout': (context) => const ProtectedRoute(
+          routeName: 'Product Checkout',
+          child: ProductCheckoutPage(),
+        ),
 
         // Coaching
         '/coaching': (context) => const CoachingSelect(),
@@ -134,6 +155,10 @@ class MyApp extends StatelessWidget {
               amount: "100",
               phone: "0123456789",
             ),
+        '/receipts': (context) => const ProtectedRoute(
+          routeName: 'Receipts',
+          child: ReceiptScreen(),
+        ),
 
         // e-Shop
         '/listproducts': (context) => const ListProductsPage(),
