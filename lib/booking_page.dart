@@ -164,7 +164,6 @@ class _BookingPageState extends State<BookingPage> {
       int? parsedId;
       if (customerId.startsWith('#')) {
         // Skip formatted IDs like #FS00011, we'll use user_id instead
-        print('⚠️ Found formatted customer ID: $customerId, will use user_id instead');
         customerId = null; // Reset to null so we use user_id
       } else {
         parsedId = int.tryParse(customerId);
@@ -174,24 +173,19 @@ class _BookingPageState extends State<BookingPage> {
         setState(() {
           currentCustomerId = parsedId;
         });
-        print('✅ Customer ID loaded successfully: $currentCustomerId');
         
         // Save to shared preferences as backup for future use
         if (customerId != null) {
           await prefs.setString('customer_id', customerId);
-          print('💾 Saved customer ID to shared preferences as backup');
         }
       }
     }
     
     // If we still don't have a valid customer ID, try to get user_id
     if (currentCustomerId == null) {
-      print('🔍 Trying to get user_id as customer ID...');
-      
       // Try to get all keys from secure storage
       try {
         final allKeys = await storage.readAll();
-        print('🔐 Available keys in secure storage: ${allKeys.keys.toList()}');
         
         // Use user_id as the primary customer ID
         if (allKeys.containsKey('user_id')) {
@@ -202,22 +196,16 @@ class _BookingPageState extends State<BookingPage> {
               setState(() {
                 currentCustomerId = parsedId;
               });
-              print('✅ Using user_id as customer_id: $currentCustomerId');
               
               // Save this as customer_id for future use
               await prefs.setString('customer_id', userId);
               await storage.write(key: 'customer_id', value: userId);
-              print('💾 Saved user_id as customer_id for future use');
             }
           }
         }
       } catch (e) {
-        print('❌ Error reading secure storage keys: $e');
+        // Handle error silently
       }
-    }
-    
-    if (currentCustomerId == null) {
-      print('❌ No valid customer ID found in any storage location');
     }
   }
 
@@ -227,22 +215,16 @@ class _BookingPageState extends State<BookingPage> {
     });
 
     try {
-      print('🔍 Loading courts from API...');
       final response = await BookingService.getCourts();
-      print('📡 API Response: $response');
       
       if (response['success']) {
         final courtsData = response['courts'] as List;
-        print('🏟️ Courts data: $courtsData');
         
         setState(() {
           courts = courtsData.map((court) => Court.fromJson(court)).toList();
           isLoading = false;
         });
-        
-        print('✅ Loaded ${courts.length} courts successfully');
       } else {
-        print('❌ API returned success: false');
         setState(() {
           isLoading = false;
         });
@@ -251,7 +233,6 @@ class _BookingPageState extends State<BookingPage> {
         );
       }
     } catch (e) {
-      print('💥 Exception loading courts: $e');
       setState(() {
         isLoading = false;
       });
@@ -459,7 +440,7 @@ class _BookingPageState extends State<BookingPage> {
                             DateTime.parse('2024-01-01 ${slot.start}:00')
                           );
                         });
-                        print('🕐 Selected time slot: ${slot.display} (${slot.start} - ${slot.end})');
+
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: isSelected ? Colors.black : const Color(0xFF4997D0),
@@ -792,149 +773,7 @@ class _BookingPageState extends State<BookingPage> {
     return "Book Now";
   }
 
-  // Debug method to show all stored data
-  Future<void> _debugStorage() async {
-    final prefs = await SharedPreferences.getInstance();
-    final storage = const FlutterSecureStorage();
-    
-    print('🔍 === DEBUG STORAGE ===');
-    print('📱 Shared Preferences Keys: ${prefs.getKeys()}');
-    
-    // Show all shared preferences values
-    for (String key in prefs.getKeys()) {
-      final value = prefs.getString(key);
-      print('📱 $key: $value');
-    }
-    
-    // Show all secure storage values
-    try {
-      final allKeys = await storage.readAll();
-      print('🔐 Secure Storage Keys: ${allKeys.keys.toList()}');
-      for (String key in allKeys.keys) {
-        print('🔐 $key: ${allKeys[key]}');
-      }
-    } catch (e) {
-      print('❌ Error reading secure storage: $e');
-    }
-    
-    print('👤 Current Customer ID: $currentCustomerId');
-    print('🔍 === END DEBUG ===');
-    
-    // Show dialog with debug info
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Debug Information'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Current Customer ID: $currentCustomerId', 
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const SizedBox(height: 12),
-              FutureBuilder<Map<String, String>>(
-                future: storage.readAll(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasData) {
-                    final allKeys = snapshot.data!;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('🔐 User ID (Primary): ${allKeys['user_id'] ?? 'null'}',
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
-                        const SizedBox(height: 8),
-                        Text('📱 Customer ID (Formatted): ${allKeys['customer_id'] ?? 'null'}',
-                          style: const TextStyle(color: Colors.orange)),
-                        const SizedBox(height: 8),
-                        Text('👤 User Name: ${allKeys['user_name'] ?? 'null'}'),
-                        const SizedBox(height: 8),
-                        Text('📧 Email: ${allKeys['email'] ?? 'null'}'),
-                        const SizedBox(height: 8),
-                        Text('📱 Mobile: ${allKeys['mobile_no'] ?? 'null'}'),
-                        const SizedBox(height: 8),
-                        Text('🎯 Level: ${allKeys['level'] ?? 'null'}'),
-                        const SizedBox(height: 8),
-                        Text('💰 Credit Balance: ${allKeys['credit_balance'] ?? 'null'}'),
-                      ],
-                    );
-                  }
-                  return const Text('Loading secure storage data...');
-                },
-              ),
-              const SizedBox(height: 12),
-              Text('📱 Shared Prefs Keys: ${prefs.getKeys().join(', ')}'),
-              const SizedBox(height: 8),
-              Text('Auth Token Present: ${prefs.getString('auth_token') != null ? 'Yes' : 'No'}'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => _showManualCustomerIdInput(),
-            child: const Text('Set Customer ID'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
 
-  // Manual customer ID input for testing
-  void _showManualCustomerIdInput() {
-    final controller = TextEditingController();
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Set Customer ID'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Enter customer ID for testing:'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Customer ID',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final customerId = int.tryParse(controller.text);
-              if (customerId != null) {
-                setState(() {
-                  currentCustomerId = customerId;
-                });
-                print('✅ Manual customer ID set: $currentCustomerId');
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Customer ID set to: $customerId')),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid number')),
-                );
-              }
-            },
-            child: const Text('Set'),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -954,24 +793,10 @@ class _BookingPageState extends State<BookingPage> {
                     icon: const Icon(Icons.arrow_back),
                     onPressed: () => Navigator.pop(context),
                   ),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        onPressed: _loadCourts,
-                        tooltip: 'Reload Courts',
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.person),
-                        onPressed: _loadCustomerId,
-                        tooltip: 'Reload Customer ID',
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.bug_report),
-                        onPressed: _debugStorage,
-                        tooltip: 'Debug Storage',
-                      ),
-                    ],
+                  IconButton(
+                    icon: const Icon(Icons.list),
+                    onPressed: () => Navigator.pushNamed(context, '/booking-list'),
+                    tooltip: 'View My Bookings',
                   ),
                 ],
               ),

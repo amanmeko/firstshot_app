@@ -32,8 +32,8 @@ import 'friend_requests_page.dart';
 
 // Booking & Coaching
 import 'booking_page.dart';
-import 'bookingdetails.dart';
-import 'booking_details.dart';
+import 'bookingdetails.dart' as booking_details_create;
+import 'booking_details.dart' as booking_details_view;
 import 'booking_list_page.dart';
 import 'checkout_page.dart';
 import 'coaching_select.dart';
@@ -129,6 +129,16 @@ class MyApp extends StatelessWidget {
           routeName: 'Checkout',
           child: CheckoutPage(),
         ),
+        '/booking-details': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments;
+          final bookingId = args is int ? args : null;
+          return ProtectedRoute(
+            routeName: 'Booking Details',
+            child: booking_details_view.BookingDetailsPage(
+              bookingId: bookingId ?? 0,
+            ),
+          );
+        },
         '/classbookinginfo': (context) => const ProtectedRoute(
           routeName: 'Class Booking',
           child: ClassBookingInfoPage(),

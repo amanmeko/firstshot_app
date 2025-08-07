@@ -12,7 +12,6 @@ class BookingService {
     if (token == null) {
       token = prefs.getString('token');
     }
-    print('🔑 Token: ${token != null ? 'Present' : 'Missing'}');
     return token;
   }
 
@@ -27,31 +26,20 @@ class BookingService {
 
   static Future<Map<String, dynamic>> getCourts() async {
     try {
-      print('🌐 Making API call to: $baseUrl/courts');
-      
-      // Get authentication headers
       final headers = await _getHeaders();
-      print('📋 Headers: $headers');
       
       final response = await http.get(
         Uri.parse('$baseUrl/courts'),
         headers: headers,
       );
 
-      print('📡 Response status: ${response.statusCode}');
-      print('📄 Response body: ${response.body}');
-
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        print('✅ Successfully parsed response: $data');
         return data;
       } else {
-        print('❌ HTTP Error: ${response.statusCode}');
-        print('❌ Error body: ${response.body}');
         throw Exception('Failed to load courts: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      print('💥 Exception in getCourts: $e');
       throw Exception('Error fetching courts: $e');
     }
   }
