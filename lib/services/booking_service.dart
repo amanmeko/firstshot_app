@@ -76,6 +76,7 @@ class BookingService {
     required String paymentMethod,
     String? notes,
     String? promoCode,
+    int? durationHours,
   }) async {
     try {
       final headers = await _getHeaders();
@@ -87,6 +88,7 @@ class BookingService {
         'end_time': endTime,
         'price': price,
         'payment_method': paymentMethod,
+        if (durationHours != null) 'duration': durationHours,
         if (notes != null) 'notes': notes,
         if (promoCode != null) 'promo_code': promoCode,
       };
@@ -97,11 +99,43 @@ class BookingService {
         body: json.encode(body),
       );
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return json.decode(response.body);
-      } else {
+      final status = response.statusCode;
+      final contentType = response.headers['content-type'] ?? '';
+      final requestUrl = response.request?.url.toString();
+
+      // Handle redirects (e.g., to payment gateway)
+      if (status >= 300 && status < 400) {
+        final location = response.headers['location'] ?? requestUrl ?? '';
+        if (location.isNotEmpty) {
+          return {
+            'success': true,
+            'payment_url': location,
+          };
+        }
+      }
+
+      // JSON success
+      if (status == 200 || status == 201) {
+        if (contentType.contains('application/json')) {
+          return json.decode(response.body);
+        }
+        // Non-JSON response (likely HTML payment page)
+        return {
+          'success': true,
+          'payment_url': requestUrl ?? '',
+          'html': response.body,
+        };
+      }
+
+      // Error paths: try to parse JSON message, else return raw snippet
+      try {
         final errorBody = json.decode(response.body);
         throw Exception(errorBody['message'] ?? 'Failed to create booking');
+      } catch (_) {
+        final snippet = response.body.length > 200
+            ? response.body.substring(0, 200)
+            : response.body;
+        throw Exception('HTTP $status: $snippet');
       }
     } catch (e) {
       throw Exception('Error creating booking: $e');

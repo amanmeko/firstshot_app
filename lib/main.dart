@@ -56,6 +56,7 @@ import 'credit_transfer_success.dart';
 import 'productcheckout.dart';
 import 'listproducts.dart';
 import 'receipt.dart';
+import 'payment_webview_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -169,6 +170,19 @@ class MyApp extends StatelessWidget {
           routeName: 'Receipts',
           child: ReceiptScreen(),
         ),
+        '/payment': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments;
+          String url = '';
+          String? title;
+          if (args is Map) {
+            url = (args['url'] ?? '').toString();
+            title = args['title']?.toString();
+          }
+          return ProtectedRoute(
+            routeName: 'Payment',
+            child: PaymentWebViewPage(url: url, title: title),
+          );
+        },
 
         // e-Shop
         '/listproducts': (context) => const ListProductsPage(),

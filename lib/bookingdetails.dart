@@ -4,6 +4,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'services/booking_service.dart';
 import 'models/court.dart';
+import 'payment_webview_page.dart';
 
 class BookingDetailsPage extends StatefulWidget {
   final Court selectedCourt;
@@ -121,16 +122,6 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
         minute: startTime.minute,
       );
 
-      print('📤 Creating booking with API:');
-      print('  - Court ID: ${widget.selectedCourt.id}');
-      print('  - Customer ID: ${widget.customerId}');
-      print('  - Date: ${DateFormat('yyyy-MM-dd').format(widget.selectedDate)}');
-      print('  - Start Time: ${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}');
-      print('  - End Time: ${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}');
-      print('  - Duration: $durationHours hours');
-      print('  - Price: $_total');
-      print('  - Promo Code: ${isPromoCodeValid ? _voucherController.text.trim() : 'None'}');
-
       final response = await BookingService.createBooking(
         courtId: widget.selectedCourt.id,
         customerId: widget.customerId,
@@ -138,27 +129,73 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
         startTime: '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
         endTime: '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}',
         price: _total,
-        paymentMethod: 'cash', // Default payment method
+        paymentMethod: 'online',
         notes: 'Booking from mobile app',
         promoCode: isPromoCodeValid ? _voucherController.text.trim() : null,
       );
 
-      setState(() {
-        isLoading = false;
-      });
+      setState(() { isLoading = false; });
 
-      if (response['success']) {
-        // Show success dialog
+      if (response['success'] == true) {
+        // Case 1: direct URL
+        final paymentUrl = response['payment_url'] ?? response['redirect_url'] ?? response['url'];
+        if (paymentUrl is String && paymentUrl.isNotEmpty) {
+          if (!mounted) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PaymentWebViewPage(url: paymentUrl, title: 'Payment'),
+            ),
+          );
+          return;
+        }
+
+        // Case 2: backend returned structured POST form details
+        final payment = response['payment'];
+        if (payment is Map) {
+          final method = payment['method'];
+          final actionUrl = payment['action_url'];
+          final params = payment['params'];
+          if (method == 'POST' && actionUrl is String && params is Map) {
+            String _escapeHtml(Object? value) {
+              final s = (value ?? '').toString();
+              return s
+                  .replaceAll('&', '&amp;')
+                  .replaceAll('<', '&lt;')
+                  .replaceAll('>', '&gt;')
+                  .replaceAll('"', '&quot;')
+                  .replaceAll("'", '&#39;');
+            }
+
+            final inputs = params.entries
+                .map((e) => '<input type="hidden" name="${_escapeHtml(e.key)}" value="${_escapeHtml(e.value)}">')
+                .join();
+            final html = '<!doctype html><html><head><meta charset="utf-8"></head><body onload="document.f.submit()">\n'
+                '<form name="f" method="post" action="${_escapeHtml(actionUrl)}" accept-charset="UTF-8">$inputs</form>'
+                '<noscript><button type="submit">Continue</button></noscript>'
+                '</body></html>';
+            if (!mounted) return;
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PaymentWebViewPage(html: html, title: 'Payment'),
+              ),
+            );
+            return;
+          }
+        }
+        // No URL: fallback to success dialog
+        if (!mounted) return;
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Booking Successful!'),
-            content: Text('Your booking has been confirmed. Booking ID: ${response['booking']['id']}'),
+            content: Text('Your booking has been created. Booking ID: ${response['booking']?['id'] ?? '-'}'),
             actions: [
               TextButton(
                 onPressed: () {
-                  Navigator.pop(context); // Close dialog
-                  Navigator.pop(context); // Go back to booking page
+                  Navigator.pop(context);
+                  Navigator.pop(context);
                 },
                 child: const Text('OK'),
               ),
@@ -166,14 +203,14 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
           ),
         );
       } else {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(response['message'] ?? 'Booking failed')),
         );
       }
     } catch (e) {
-      setState(() {
-        isLoading = false;
-      });
+      setState(() { isLoading = false; });
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error creating booking: $e')),
       );

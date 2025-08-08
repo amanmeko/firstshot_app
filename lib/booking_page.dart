@@ -453,7 +453,7 @@ class _BookingPageState extends State<BookingPage> {
                       ),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
+            children: [
                           // Time display
                           Text(
                             slot.display,
@@ -599,17 +599,17 @@ class _BookingPageState extends State<BookingPage> {
         
         // Quick date selector (next 12 days)
         SizedBox(
-          height: 90,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: 12,
-            itemBuilder: (context, index) {
-              DateTime date = DateTime.now().add(Duration(days: index));
-              bool isSelected = date.day == selectedDate.day &&
-                  date.month == selectedDate.month &&
-                  date.year == selectedDate.year;
+      height: 90,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: 12,
+        itemBuilder: (context, index) {
+          DateTime date = DateTime.now().add(Duration(days: index));
+          bool isSelected = date.day == selectedDate.day &&
+              date.month == selectedDate.month &&
+              date.year == selectedDate.year;
 
-              return GestureDetector(
+          return GestureDetector(
                 onTap: () {
                   setState(() {
                     selectedDate = date;
@@ -619,17 +619,17 @@ class _BookingPageState extends State<BookingPage> {
                     _loadAvailableTimeSlots();
                   }
                 },
-                child: Container(
-                  width: 70,
-                  margin: const EdgeInsets.symmetric(horizontal: 6),
-                  decoration: BoxDecoration(
-                    color: isSelected ? const Color(0xFF4997D0) : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
+            child: Container(
+              width: 70,
+              margin: const EdgeInsets.symmetric(horizontal: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFF4997D0) : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
                       Text(
                         DateFormat('E').format(date), 
                         style: TextStyle(
@@ -638,7 +638,7 @@ class _BookingPageState extends State<BookingPage> {
                           fontSize: 12,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                  const SizedBox(height: 4),
                       Text(
                         '${date.day}', 
                         style: TextStyle(
@@ -647,7 +647,7 @@ class _BookingPageState extends State<BookingPage> {
                           color: isSelected ? Colors.white : Colors.black,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                  const SizedBox(height: 4),
                       Text(
                         DateFormat('MMM').format(date), 
                         style: TextStyle(
@@ -655,12 +655,12 @@ class _BookingPageState extends State<BookingPage> {
                           fontSize: 11,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
         ),
         
         // Selected date description
@@ -789,9 +789,9 @@ class _BookingPageState extends State<BookingPage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () => Navigator.pop(context),
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
                   ),
                   IconButton(
                     icon: const Icon(Icons.list),
