@@ -204,17 +204,70 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
         );
       } else {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(response['message'] ?? 'Booking failed')),
-        );
+        final message = (response['message'] ?? '').toString();
+        final isSlotUnavailable = message.toLowerCase().contains('not available') ||
+            message.toLowerCase().contains('time slot') ||
+            (response['errors'] is Map &&
+                (response['errors']['time_slot']?.toString().isNotEmpty ?? false));
+
+        if (isSlotUnavailable) {
+          await _showSlotUnavailableDialog();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message.isNotEmpty ? message : 'Booking failed')),
+          );
+        }
       }
     } catch (e) {
       setState(() { isLoading = false; });
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error creating booking: $e')),
-      );
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('not available') || msg.contains('time slot')) {
+        await _showSlotUnavailableDialog();
+      } else if (msg.contains('separation symbol')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Time parsing issue. Please reselect a time slot.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error creating booking: $e')),
+        );
+      }
     }
+  }
+
+  Future<void> _showSlotUnavailableDialog() async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Time Slot Unavailable'),
+          ],
+        ),
+        content: const Text(
+          'Sorry, this time slot was just taken. Please choose another available time.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context); // close dialog
+              Navigator.pop(context); // go back to time slots screen
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Color(0xFF4997D0)),
+            child: const Text('Choose Another Time'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _onBottomTap(int index) {

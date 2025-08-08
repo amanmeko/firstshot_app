@@ -25,7 +25,8 @@ class _BookingPageState extends State<BookingPage> {
   
   List<Court> courts = [];
   List<TimeSlot> availableTimeSlots = [];
-  TimeSlot? selectedTimeSlot;
+  // Multi-select consecutive slots (max 3)
+  List<TimeSlot> selectedSlots = [];
   bool isLoading = false;
   bool isLoadingTimeSlots = false;
   int? currentCustomerId;
@@ -36,6 +37,39 @@ class _BookingPageState extends State<BookingPage> {
   void initState() {
     super.initState();
     _checkAuthenticationAndLoad();
+  }
+
+  void _toggleSlotSelection(TimeSlot slot) {
+    setState(() {
+      final exists = selectedSlots.any((s) => s.start == slot.start);
+      if (exists) {
+        selectedSlots.removeWhere((s) => s.start == slot.start);
+        return;
+      }
+      if (selectedSlots.length >= 3) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Maximum 3 consecutive slots allowed')),
+        );
+        return;
+      }
+      if (selectedSlots.isEmpty) {
+        selectedSlots.add(slot);
+        return;
+      }
+      final sorted = [...selectedSlots]..sort((a, b) => a.start.compareTo(b.start));
+      final first = sorted.first;
+      final last = sorted.last;
+      final isAdjacentToStart = slot.end == first.start;
+      final isAdjacentToEnd = last.end == slot.start;
+      if (!isAdjacentToStart && !isAdjacentToEnd) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select consecutive slots only')),
+        );
+        return;
+      }
+      selectedSlots.add(slot);
+      selectedSlots.sort((a, b) => a.start.compareTo(b.start));
+    });
   }
 
   Future<void> _checkAuthenticationAndLoad() async {
@@ -272,17 +306,84 @@ class _BookingPageState extends State<BookingPage> {
       );
       
       setState(() {
-        availableTimeSlots = timeSlots.map((slot) => TimeSlot.fromJson(slot)).toList();
+        availableTimeSlots = timeSlots
+            .map((slot) => TimeSlot.fromJson(slot))
+            .where((s) => (s.start).toString().isNotEmpty && (s.end).toString().isNotEmpty)
+            .toList();
         isLoadingTimeSlots = false;
       });
     } catch (e) {
       setState(() {
         isLoadingTimeSlots = false;
+        availableTimeSlots = [];
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading time slots: $e')),
+      // Console logging for debugging
+      // ignore: avoid_print
+      print('Error loading time slots for court ${selectedCourt?.id} on ' + DateFormat('yyyy-MM-dd').format(selectedDate) + ': ' + e.toString());
+      final err = e.toString();
+      if (err.contains('401') || err.toLowerCase().contains('unauthenticated')) {
+        // Auth expired
+        _showErrorCard(
+          title: 'Authentication required',
+          message: 'Please log in again to view available time slots.',
+          icon: Icons.lock_outline,
+          color: Colors.orange,
+        );
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) Navigator.pushReplacementNamed(context, '/login');
+        });
+        return;
+      }
+
+      _showErrorCard(
+        title: 'Couldn\'t load time slots',
+        message: err.replaceFirst('Exception: ', ''),
+        icon: Icons.schedule,
+        color: Colors.red,
       );
     }
+  }
+
+  void _showErrorCard({required String title, required String message, required IconData icon, required Color color}) {
+    final overlay = Overlay.of(context);
+    if (overlay == null) return;
+    final entry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: 16,
+        right: 16,
+        bottom: 24,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: color.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, color: color),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(title, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text(message, style: TextStyle(color: color.withOpacity(0.9))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 3)).then((_) => entry.remove());
   }
 
   void _pickTime() async {
@@ -314,7 +415,7 @@ class _BookingPageState extends State<BookingPage> {
       onTap: available ? () {
         setState(() {
           selectedCourt = court;
-          selectedTimeSlot = null; // Clear selected time slot when court changes
+          selectedSlots.clear(); // Clear selections when court changes
         });
         _loadAvailableTimeSlots();
       } : null,
@@ -427,21 +528,13 @@ class _BookingPageState extends State<BookingPage> {
                 itemCount: availableTimeSlots.length,
                 itemBuilder: (context, index) {
                   final slot = availableTimeSlots[index];
-                  final bool isSelected = selectedTimeSlot?.start == slot.start;
+                  final bool isSelected = selectedSlots.any((s) => s.start == slot.start);
                   
                   return Container(
                     width: MediaQuery.of(context).size.width > 600 ? 120 : 100,
                     margin: const EdgeInsets.only(right: 12),
                     child: ElevatedButton(
-                      onPressed: () {
-                        setState(() {
-                          selectedTimeSlot = slot;
-                          selectedTime = TimeOfDay.fromDateTime(
-                            DateTime.parse('2024-01-01 ${slot.start}:00')
-                          );
-                        });
-
-                      },
+                      onPressed: () => _toggleSlotSelection(slot),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: isSelected ? Colors.black : const Color(0xFF4997D0),
                         foregroundColor: Colors.white,
@@ -464,22 +557,7 @@ class _BookingPageState extends State<BookingPage> {
                             textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 4),
-                          // Duration
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '${slot.duration}h',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
+                          // Removed duration badge per requirements
                           // Time range
                           Text(
                             '${slot.start} - ${slot.end}',
@@ -611,10 +689,10 @@ class _BookingPageState extends State<BookingPage> {
 
           return GestureDetector(
                 onTap: () {
-                  setState(() {
-                    selectedDate = date;
-                    selectedTimeSlot = null; // Clear selected time slot when date changes
-                  });
+                    setState(() {
+                      selectedDate = date;
+                      selectedSlots.clear(); // Clear selections when date changes
+                    });
                   if (selectedCourt != null) {
                     _loadAvailableTimeSlots();
                   }
@@ -711,7 +789,7 @@ class _BookingPageState extends State<BookingPage> {
     if (picked != null && picked != selectedDate) {
       setState(() {
         selectedDate = picked;
-        selectedTimeSlot = null; // Clear selected time slot when date changes
+        selectedSlots.clear(); // Clear selections when date changes
       });
       if (selectedCourt != null) {
         _loadAvailableTimeSlots();
@@ -743,17 +821,29 @@ class _BookingPageState extends State<BookingPage> {
   bool get _isBookingEnabled {
     final bool hasCourt = selectedCourt != null;
     final bool hasTimeSlots = availableTimeSlots.isNotEmpty;
-    final bool hasSelectedTimeSlot = selectedTimeSlot != null;
+    final bool hasSelected = selectedSlots.isNotEmpty;
+    final bool withinLimit = selectedSlots.length <= 3;
+    final bool consecutive = _areSlotsConsecutive(selectedSlots);
     final bool hasCustomerId = currentCustomerId != null;
-    
+
     print('🔍 Booking button check:');
     print('  - Court selected: $hasCourt');
     print('  - Time slots available: $hasTimeSlots');
-    print('  - Time slot selected: $hasSelectedTimeSlot');
+    print('  - Selected slots: ${selectedSlots.length}');
+    print('  - Consecutive: $consecutive');
     print('  - Customer ID: $hasCustomerId');
-    print('  - Total enabled: ${hasCourt && hasTimeSlots && hasSelectedTimeSlot && hasCustomerId}');
-    
-    return hasCourt && hasTimeSlots && hasSelectedTimeSlot && hasCustomerId;
+    print('  - Total enabled: ${hasCourt && hasTimeSlots && hasSelected && withinLimit && consecutive && hasCustomerId}');
+
+    return hasCourt && hasTimeSlots && hasSelected && withinLimit && consecutive && hasCustomerId;
+  }
+
+  bool _areSlotsConsecutive(List<TimeSlot> slots) {
+    if (slots.isEmpty) return false;
+    final sorted = [...slots]..sort((a,b) => a.start.compareTo(b.start));
+    for (int i = 1; i < sorted.length; i++) {
+      if (sorted[i-1].end != sorted[i].start) return false;
+    }
+    return true;
   }
 
   // Get appropriate booking button text
@@ -767,9 +857,9 @@ class _BookingPageState extends State<BookingPage> {
     if (availableTimeSlots.isEmpty) {
       return "No Available Times";
     }
-    if (selectedTimeSlot == null) {
-      return "Select a Time Slot";
-    }
+    if (selectedSlots.isEmpty) return "Select Time Slots (max 3)";
+    if (!_areSlotsConsecutive(selectedSlots)) return "Select Consecutive Slots";
+    if (selectedSlots.length > 3) return "Max 3 Slots";
     return "Book Now";
   }
 
@@ -808,39 +898,8 @@ class _BookingPageState extends State<BookingPage> {
               const SizedBox(height: 8),
               _buildDateSelector(),
               const SizedBox(height: 20),
-              const Text("Select Time & Duration", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: _pickTime,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border.all(color: Colors.grey.shade300),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(selectedTime.format(context), style: const TextStyle(fontSize: 16)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: durations
-                            .map((d) => Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: _buildDurationButton(d),
-                        ))
-                            .toList(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
+              // Removed manual time & duration selectors for multi-select slot flow
+              const SizedBox(height: 8),
               const Text("Select Court", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
               const SizedBox(height: 10),
               _buildCourtGrid(),
@@ -869,8 +928,8 @@ class _BookingPageState extends State<BookingPage> {
                       Expanded(
                         child: Text(
                           _isBookingEnabled 
-                            ? 'Ready to book! All selections complete.'
-                            : 'Please complete all selections to book.',
+                            ? 'Ready to book! ${selectedSlots.length} slot(s) selected.'
+                            : 'Select up to 3 consecutive time slots to proceed.',
                           style: TextStyle(
                             color: _isBookingEnabled ? Colors.green : Colors.orange,
                             fontWeight: FontWeight.w500,
@@ -885,16 +944,24 @@ class _BookingPageState extends State<BookingPage> {
               
               ElevatedButton(
                 onPressed: _isBookingEnabled ? () {
-                  // Convert duration to hours (e.g., "1 hour" -> 1, "2 hours" -> 2)
-                  final durationHours = int.parse(selectedDuration.split(' ')[0]);
-                  
+                  final sorted = [...selectedSlots]..sort((a,b) => a.start.compareTo(b.start));
+                  final first = sorted.first;
+                  final hours = sorted.length; // 1h per slot
+
+                  // compute selectedTime from first slot
+                  final parts = first.start.split(':');
+                  final hour = int.tryParse(parts[0]) ?? 0;
+                  final minute = int.tryParse(parts[1]) ?? 0;
+                  selectedTime = TimeOfDay(hour: hour, minute: minute);
+                  selectedDuration = hours == 1 ? '1 hour' : '$hours hours';
+
                   print('📋 Booking details:');
                   print('  - Court: ${selectedCourt!.name}');
                   print('  - Date: ${DateFormat('yyyy-MM-dd').format(selectedDate)}');
-                  print('  - Time: ${selectedTimeSlot!.start}');
-                  print('  - Duration: $durationHours hours');
+                  print('  - Start: ${first.start}');
+                  print('  - Slots: ${hours}');
                   print('  - Customer ID: $currentCustomerId');
-                  
+
                   Navigator.push(
                     context,
                     MaterialPageRoute(

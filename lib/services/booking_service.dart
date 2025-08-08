@@ -50,18 +50,48 @@ class BookingService {
   }) async {
     try {
       final headers = await _getHeaders();
+      print('BookingService.getAvailableTimes: courtId=$courtId date=$date headers=${headers.keys}');
       final response = await http.get(
         Uri.parse('$baseUrl/bookings/available-times?court_id=$courtId&date=$date'),
         headers: headers,
       );
+      print('GET /available-times -> status: ${response.statusCode}');
+      if (response.statusCode != 200) {
+        print('Response body: ${response.body}');
+      }
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.cast<Map<String, dynamic>>();
-      } else {
-        throw Exception('Failed to load available times: ${response.statusCode}');
       }
-    } catch (e) {
+
+      // Try to parse error body for a clearer message
+      String errorMessage = 'Failed to load available times (HTTP ${response.statusCode})';
+      try {
+        final dynamic body = json.decode(response.body);
+        if (body is Map<String, dynamic>) {
+          if (body['message'] is String && (body['message'] as String).isNotEmpty) {
+            errorMessage = body['message'];
+          } else if (body['errors'] is Map) {
+            final Map errs = body['errors'] as Map;
+            if (errs['time_slot'] != null) {
+              final ts = errs['time_slot'];
+              if (ts is List && ts.isNotEmpty) {
+                errorMessage = ts.first.toString();
+              } else {
+                errorMessage = ts.toString();
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // ignore JSON parse failures; keep default errorMessage
+      }
+      print('Throwing error from getAvailableTimes: ' + errorMessage);
+      throw Exception(errorMessage);
+    } catch (e, st) {
+      print('Error fetching available times: $e');
+      print(st);
       throw Exception('Error fetching available times: $e');
     }
   }
