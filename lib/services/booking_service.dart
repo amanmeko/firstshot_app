@@ -258,4 +258,46 @@ class BookingService {
       throw Exception('Error fetching bookings: $e');
     }
   }
+
+  // Get existing bookings for a specific court and date
+  static Future<List<Map<String, dynamic>>> getCourtBookings({
+    required int courtId,
+    required String date,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      
+      // Try multiple possible endpoints for getting court bookings
+      final endpoints = [
+        'bookings/court',
+        'bookings/court-bookings',
+        'courts/$courtId/bookings',
+        'bookings?court_id=$courtId&date=$date',
+      ];
+      
+      for (final endpoint in endpoints) {
+        try {
+          final uri = Uri.parse('$baseUrl/$endpoint');
+          final response = await http.get(uri, headers: headers);
+          
+          if (response.statusCode == 200) {
+            final List<dynamic> data = json.decode(response.body);
+            print('Successfully fetched court bookings from endpoint: $endpoint');
+            return data.cast<Map<String, dynamic>>();
+          }
+        } catch (e) {
+          print('Failed to fetch from endpoint $endpoint: $e');
+          continue;
+        }
+      }
+      
+      // If no endpoints work, return empty list
+      print('No working endpoints found for court bookings, returning empty list');
+      return [];
+    } catch (e) {
+      // If there's an error, return empty list to avoid blocking the main flow
+      print('Error fetching court bookings: $e');
+      return [];
+    }
+  }
 }

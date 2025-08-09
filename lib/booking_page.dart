@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -30,6 +31,11 @@ class _BookingPageState extends State<BookingPage> {
   bool isLoading = false;
   bool isLoadingTimeSlots = false;
   int? currentCustomerId;
+  
+  // Timer for auto-refresh
+  Timer? _refreshTimer;
+  DateTime? _lastRefreshTime;
+  bool _isRunningInFallbackMode = false;
 
   final List<String> durations = ["1 hour", "2 hours", "3 hours"];
 
@@ -37,6 +43,31 @@ class _BookingPageState extends State<BookingPage> {
   void initState() {
     super.initState();
     _checkAuthenticationAndLoad();
+    _startAutoRefresh();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoRefresh() {
+    // Refresh available time slots every 2 minutes to keep them current
+    _refreshTimer = Timer.periodic(const Duration(minutes: 2), (timer) {
+      if (selectedCourt != null && mounted) {
+        _loadAvailableTimeSlots();
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh time slots when returning to the page
+    if (selectedCourt != null && availableTimeSlots.isNotEmpty) {
+      _loadAvailableTimeSlots();
+    }
   }
 
   void _toggleSlotSelection(TimeSlot slot) {
@@ -300,17 +331,30 @@ class _BookingPageState extends State<BookingPage> {
 
     try {
       final dateString = DateFormat('yyyy-MM-dd').format(selectedDate);
+      
+      // Get both available time slots and existing bookings
       final timeSlots = await BookingService.getAvailableTimes(
         courtId: selectedCourt!.id,
         date: dateString,
       );
       
+      // Get existing bookings for this court and date
+      final existingBookings = await BookingService.getCourtBookings(
+        courtId: selectedCourt!.id,
+        date: dateString,
+      );
+      
+      // Filter out time slots that conflict with existing bookings
+      final filteredTimeSlots = _filterConflictingTimeSlots(timeSlots, existingBookings);
+      
       setState(() {
-        availableTimeSlots = timeSlots
+        availableTimeSlots = filteredTimeSlots
             .map((slot) => TimeSlot.fromJson(slot))
             .where((s) => (s.start).toString().isNotEmpty && (s.end).toString().isNotEmpty)
             .toList();
         isLoadingTimeSlots = false;
+        _lastRefreshTime = DateTime.now();
+        _isRunningInFallbackMode = existingBookings.isEmpty;
       });
     } catch (e) {
       setState(() {
@@ -342,6 +386,66 @@ class _BookingPageState extends State<BookingPage> {
         color: Colors.red,
       );
     }
+  }
+
+  // Helper method to filter out time slots that conflict with existing bookings
+  List<Map<String, dynamic>> _filterConflictingTimeSlots(
+    List<Map<String, dynamic>> timeSlots,
+    List<Map<String, dynamic>> existingBookings,
+  ) {
+    if (existingBookings.isEmpty) {
+      // If we couldn't get existing bookings, we can't filter them out
+      // This is a fallback to ensure the app still works
+      print('Warning: No existing bookings data available, showing all time slots from API');
+      return timeSlots;
+    }
+
+    final filteredSlots = timeSlots.where((slot) {
+      final slotStart = slot['start'] as String;
+      final slotEnd = slot['end'] as String;
+      
+      // Check if this time slot conflicts with any existing booking
+      for (final booking in existingBookings) {
+        final bookingStart = booking['start_time'] as String?;
+        final bookingEnd = booking['end_time'] as String?;
+        
+        if (bookingStart != null && bookingEnd != null) {
+          // Check for time overlap
+          if (_hasTimeOverlap(slotStart, slotEnd, bookingStart, bookingEnd)) {
+            print('Filtering out conflicting time slot: $slotStart-$slotEnd (conflicts with booking: $bookingStart-$bookingEnd)');
+            return false; // This slot conflicts, filter it out
+          }
+        }
+      }
+      
+      return true; // No conflicts, keep this slot
+    }).toList();
+    
+    print('Filtered ${timeSlots.length} time slots to ${filteredSlots.length} available slots');
+    return filteredSlots;
+  }
+
+  // Helper method to check if two time ranges overlap
+  bool _hasTimeOverlap(String start1, String end1, String start2, String end2) {
+    // Convert time strings to comparable values (assuming HH:MM format)
+    final start1Minutes = _timeStringToMinutes(start1);
+    final end1Minutes = _timeStringToMinutes(end1);
+    final start2Minutes = _timeStringToMinutes(start2);
+    final end2Minutes = _timeStringToMinutes(end2);
+    
+    // Check for overlap: if one range starts before another ends and ends after another starts
+    return start1Minutes < end2Minutes && end1Minutes > start2Minutes;
+  }
+
+  // Helper method to convert time string (HH:MM) to minutes since midnight
+  int _timeStringToMinutes(String timeString) {
+    final parts = timeString.split(':');
+    if (parts.length == 2) {
+      final hours = int.tryParse(parts[0]) ?? 0;
+      final minutes = int.tryParse(parts[1]) ?? 0;
+      return hours * 60 + minutes;
+    }
+    return 0; // Default fallback
   }
 
   void _showErrorCard({required String title, required String message, required IconData icon, required Color color}) {
@@ -516,7 +620,75 @@ class _BookingPageState extends State<BookingPage> {
         ),
         const SizedBox(height: 16),
         if (selectedCourt != null && availableTimeSlots.isNotEmpty) ...[
-          const Text("Available Time Slots", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Available Time Slots", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              IconButton(
+                onPressed: _loadAvailableTimeSlots,
+                icon: const Icon(Icons.refresh, color: Color(0xFF4997D0)),
+                tooltip: 'Refresh time slots',
+              ),
+            ],
+          ),
+          if (_lastRefreshTime != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text(
+                  'Last updated: ${DateFormat('HH:mm').format(_lastRefreshTime!)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+                if (DateTime.now().difference(_lastRefreshTime!).inMinutes > 5) ...[
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.warning_amber,
+                    size: 16,
+                    color: Colors.orange,
+                  ),
+                  Text(
+                    'Slots may be outdated',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.orange,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+          // Show warning if running in fallback mode
+          if (_isRunningInFallbackMode) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.orange, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Limited validation: Some time slots may not be available due to recent bookings',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.orange[700],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           if (isLoadingTimeSlots)
             const Center(child: CircularProgressIndicator())
@@ -863,6 +1035,80 @@ class _BookingPageState extends State<BookingPage> {
     return "Book Now";
   }
 
+  Future<bool> _performFinalAvailabilityCheck() async {
+    final dateString = DateFormat('yyyy-MM-dd').format(selectedDate);
+    final courtId = selectedCourt!.id;
+
+    try {
+      // Get available time slots
+      final availableSlots = await BookingService.getAvailableTimes(
+        courtId: courtId,
+        date: dateString,
+      );
+      
+      // Get existing bookings for this court and date
+      final existingBookings = await BookingService.getCourtBookings(
+        courtId: courtId,
+        date: dateString,
+      );
+      
+      // Filter out conflicting slots
+      final filteredSlots = _filterConflictingTimeSlots(availableSlots, existingBookings);
+
+      final selectedSlotStarts = selectedSlots.map((s) => s.start).toList();
+      final availableSlotStarts = filteredSlots.map((s) => s['start'] as String).toList();
+
+      // Check if all selected slots are still available
+      for (final selectedSlotStart in selectedSlotStarts) {
+        if (!availableSlotStarts.contains(selectedSlotStart)) {
+          _showErrorCard(
+            title: 'Slots Unavailable',
+            message: 'One or more selected time slots are no longer available. Please select new slots.',
+            icon: Icons.warning,
+            color: Colors.red,
+          );
+          
+          // Refresh the available time slots to show current availability
+          _loadAvailableTimeSlots();
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      _showErrorCard(
+        title: 'Error Checking Availability',
+        message: 'Failed to verify slot availability. Please try again.',
+        icon: Icons.error,
+        color: Colors.red,
+      );
+      return false;
+    }
+  }
+
+  Future<bool> _showFallbackModeConfirmation() async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Warning'),
+          content: const Text(
+            'You are in fallback mode. Some time slots might not be accurate due to recent bookings. '
+            'Are you sure you want to proceed with booking?',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Proceed'),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
 
 
   @override
@@ -943,7 +1189,20 @@ class _BookingPageState extends State<BookingPage> {
               ],
               
               ElevatedButton(
-                onPressed: _isBookingEnabled ? () {
+                onPressed: _isBookingEnabled ? () async {
+                  // Final availability check before proceeding
+                  if (!await _performFinalAvailabilityCheck()) {
+                    return; // Stop if slots are no longer available
+                  }
+                  
+                  // Show confirmation dialog if running in fallback mode
+                  if (_isRunningInFallbackMode) {
+                    final confirmed = await _showFallbackModeConfirmation();
+                    if (!confirmed) {
+                      return;
+                    }
+                  }
+                  
                   final sorted = [...selectedSlots]..sort((a,b) => a.start.compareTo(b.start));
                   final first = sorted.first;
                   final hours = sorted.length; // 1h per slot
