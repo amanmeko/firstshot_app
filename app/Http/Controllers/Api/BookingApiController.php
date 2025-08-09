@@ -114,7 +114,6 @@ class BookingApiController extends Controller
         // Get court operating hours
         $openingTime = $court->opening_time ?? '06:00';
         $closingTime = $court->closing_time ?? '22:00';
-        $slotDuration = 60; // 1 hour slots
 
         // Generate all possible time slots
         $allTimeSlots = [];
@@ -123,13 +122,15 @@ class BookingApiController extends Controller
 
         while ($currentTime < $closingTimeObj) {
             $slotStart = $currentTime->format('H:i');
-            $slotEnd = $currentTime->addHour()->format('H:i');
+            $slotEnd = $currentTime->copy()->addHour()->format('H:i');
             
             $allTimeSlots[] = [
                 'start_time' => $slotStart,
                 'end_time' => $slotEnd,
                 'is_available' => true
             ];
+            
+            $currentTime->addHour();
         }
 
         // Get all existing bookings for this court and date
@@ -178,16 +179,21 @@ class BookingApiController extends Controller
     }
 
     /**
-     * Check if two time slots overlap
+     * Check if two time slots overlap - Fixed logic
      */
     private function timeSlotsOverlap($start1, $end1, $start2, $end2)
     {
+        // Convert to Carbon objects for proper comparison
         $start1Time = Carbon::parse($start1);
         $end1Time = Carbon::parse($end1);
         $start2Time = Carbon::parse($start2);
         $end2Time = Carbon::parse($end2);
 
-        return $start1Time < $end2Time && $start2Time < $end1Time;
+        // Check for overlap: two time slots overlap if one starts before the other ends
+        // and the other starts before the first ends
+        $overlaps = ($start1Time < $end2Time) && ($start2Time < $end1Time);
+        
+        return $overlaps;
     }
 
     /**
