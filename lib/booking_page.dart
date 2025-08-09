@@ -400,14 +400,26 @@ class _BookingPageState extends State<BookingPage> {
       return timeSlots;
     }
 
+    print('Filtering ${timeSlots.length} time slots against ${existingBookings.length} existing bookings');
+    
     final filteredSlots = timeSlots.where((slot) {
-      final slotStart = slot['start'] as String;
-      final slotEnd = slot['end'] as String;
+      final slotStart = slot['start'] as String?;
+      final slotEnd = slot['end'] as String?;
+      
+      if (slotStart == null || slotEnd == null) {
+        print('Warning: Invalid time slot data: start=$slotStart, end=$slotEnd');
+        return false; // Skip invalid slots
+      }
       
       // Check if this time slot conflicts with any existing booking
       for (final booking in existingBookings) {
-        final bookingStart = booking['start_time'] as String?;
-        final bookingEnd = booking['end_time'] as String?;
+        // Try different possible field names for start and end times
+        final bookingStart = booking['start_time'] as String? ?? 
+                            booking['start'] as String? ?? 
+                            booking['startTime'] as String?;
+        final bookingEnd = booking['end_time'] as String? ?? 
+                          booking['end'] as String? ?? 
+                          booking['endTime'] as String?;
         
         if (bookingStart != null && bookingEnd != null) {
           // Check for time overlap
@@ -427,25 +439,39 @@ class _BookingPageState extends State<BookingPage> {
 
   // Helper method to check if two time ranges overlap
   bool _hasTimeOverlap(String start1, String end1, String start2, String end2) {
-    // Convert time strings to comparable values (assuming HH:MM format)
-    final start1Minutes = _timeStringToMinutes(start1);
-    final end1Minutes = _timeStringToMinutes(end1);
-    final start2Minutes = _timeStringToMinutes(start2);
-    final end2Minutes = _timeStringToMinutes(end2);
-    
-    // Check for overlap: if one range starts before another ends and ends after another starts
-    return start1Minutes < end2Minutes && end1Minutes > start2Minutes;
+    try {
+      // Convert time strings to comparable values (assuming HH:MM format)
+      final start1Minutes = _timeStringToMinutes(start1);
+      final end1Minutes = _timeStringToMinutes(end1);
+      final start2Minutes = _timeStringToMinutes(start2);
+      final end2Minutes = _timeStringToMinutes(end2);
+      
+      // Check for overlap: if one range starts before another ends and ends after another starts
+      return start1Minutes < end2Minutes && end1Minutes > start2Minutes;
+    } catch (e) {
+      print('Error checking time overlap: $e');
+      return false; // If there's an error, assume no overlap to be safe
+    }
   }
 
   // Helper method to convert time string (HH:MM) to minutes since midnight
   int _timeStringToMinutes(String timeString) {
-    final parts = timeString.split(':');
-    if (parts.length == 2) {
-      final hours = int.tryParse(parts[0]) ?? 0;
-      final minutes = int.tryParse(parts[1]) ?? 0;
-      return hours * 60 + minutes;
+    try {
+      final parts = timeString.split(':');
+      if (parts.length == 2) {
+        final hours = int.tryParse(parts[0]) ?? 0;
+        final minutes = int.tryParse(parts[1]) ?? 0;
+        return hours * 60 + minutes;
+      } else if (parts.length == 1) {
+        // Handle case where time might be just hours
+        final hours = int.tryParse(parts[0]) ?? 0;
+        return hours * 60;
+      }
+      return 0; // Default fallback
+    } catch (e) {
+      print('Error parsing time string "$timeString": $e');
+      return 0;
     }
-    return 0; // Default fallback
   }
 
   void _showErrorCard({required String title, required String message, required IconData icon, required Color color}) {

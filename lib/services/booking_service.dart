@@ -51,17 +51,33 @@ class BookingService {
     try {
       final headers = await _getHeaders();
       print('BookingService.getAvailableTimes: courtId=$courtId date=$date headers=${headers.keys}');
+      
+      // Use the V2 endpoint which should provide more accurate availability
       final response = await http.get(
-        Uri.parse('$baseUrl/bookings/available-times?court_id=$courtId&date=$date'),
+        Uri.parse('$baseUrl/bookings/available-times-v2?court_id=$courtId&date=$date'),
         headers: headers,
       );
-      print('GET /available-times -> status: ${response.statusCode}');
+      print('GET /available-times-v2 -> status: ${response.statusCode}');
       if (response.statusCode != 200) {
         print('Response body: ${response.body}');
       }
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        print('Successfully fetched ${data.length} available time slots from V2 endpoint');
+        return data.cast<Map<String, dynamic>>();
+      }
+
+      // If V2 fails, fall back to V1 endpoint
+      print('V2 endpoint failed, trying V1 endpoint...');
+      final fallbackResponse = await http.get(
+        Uri.parse('$baseUrl/bookings/available-times?court_id=$courtId&date=$date'),
+        headers: headers,
+      );
+      
+      if (fallbackResponse.statusCode == 200) {
+        final List<dynamic> data = json.decode(fallbackResponse.body);
+        print('Successfully fetched ${data.length} available time slots from V1 endpoint (fallback)');
         return data.cast<Map<String, dynamic>>();
       }
 
@@ -268,22 +284,38 @@ class BookingService {
       final headers = await _getHeaders();
       
       // Try multiple possible endpoints for getting court bookings
+      // Based on the API routes, we'll try different approaches
       final endpoints = [
-        'bookings/court',
-        'bookings/court-bookings',
-        'courts/$courtId/bookings',
         'bookings?court_id=$courtId&date=$date',
+        'bookings?court_id=$courtId&booking_date=$date',
+        'bookings/court?court_id=$courtId&date=$date',
+        'bookings/court-bookings?court_id=$courtId&date=$date',
+        'courts/$courtId/bookings?date=$date',
       ];
       
       for (final endpoint in endpoints) {
         try {
           final uri = Uri.parse('$baseUrl/$endpoint');
+          print('Trying endpoint: $endpoint');
           final response = await http.get(uri, headers: headers);
           
           if (response.statusCode == 200) {
-            final List<dynamic> data = json.decode(response.body);
-            print('Successfully fetched court bookings from endpoint: $endpoint');
-            return data.cast<Map<String, dynamic>>();
+            final data = json.decode(response.body);
+            List<Map<String, dynamic>> bookings = [];
+            
+            // Handle different response formats
+            if (data is Map<String, dynamic>) {
+              if (data['bookings'] is List) {
+                bookings = (data['bookings'] as List).cast<Map<String, dynamic>>();
+              } else if (data['data'] is List) {
+                bookings = (data['data'] as List).cast<Map<String, dynamic>>();
+              }
+            } else if (data is List) {
+              bookings = data.cast<Map<String, dynamic>>();
+            }
+            
+            print('Successfully fetched ${bookings.length} existing bookings from endpoint: $endpoint');
+            return bookings;
           }
         } catch (e) {
           print('Failed to fetch from endpoint $endpoint: $e');
