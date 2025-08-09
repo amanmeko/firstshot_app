@@ -27,20 +27,55 @@ class BookingService {
   static Future<Map<String, dynamic>> getCourts() async {
     try {
       final headers = await _getHeaders();
+      final url = '$baseUrl/courts';
+      
+      print('🔍 Fetching courts from: $url');
+      print('🔑 Headers: ${headers.keys}');
       
       final response = await http.get(
-        Uri.parse('$baseUrl/courts'),
+        Uri.parse(url),
         headers: headers,
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw Exception('Request timeout - server took too long to respond');
+        },
       );
 
+      print('📡 Courts API Response Status: ${response.statusCode}');
+      print('📄 Response Headers: ${response.headers}');
+      print('📄 Response Body Length: ${response.body.length}');
+      
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        return data;
+        try {
+          final data = json.decode(response.body);
+          print('✅ Successfully parsed courts response');
+          return data;
+        } catch (parseError) {
+          print('❌ JSON parse error: $parseError');
+          print('📄 Raw response body: ${response.body}');
+          throw Exception('Invalid JSON response from server');
+        }
       } else {
+        print('❌ HTTP Error: ${response.statusCode}');
+        print('📄 Error response body: ${response.body}');
         throw Exception('Failed to load courts: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      throw Exception('Error fetching courts: $e');
+      print('💥 Exception in getCourts: $e');
+      
+      // Provide more specific error messages
+      if (e.toString().contains('SocketException')) {
+        throw Exception('Network error: Unable to connect to server. Please check your internet connection.');
+      } else if (e.toString().contains('timeout')) {
+        throw Exception('Request timeout: Server is taking too long to respond. Please try again.');
+      } else if (e.toString().contains('HandshakeException')) {
+        throw Exception('SSL/TLS error: Unable to establish secure connection to server.');
+      } else if (e.toString().contains('FormatException')) {
+        throw Exception('Data format error: Server returned invalid data.');
+      } else {
+        throw Exception('Error fetching courts: $e');
+      }
     }
   }
 

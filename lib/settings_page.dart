@@ -255,6 +255,12 @@ class _SettingsPageState extends State<SettingsPage> {
                     'Account Deletion Request',
                     () => Navigator.pushNamed(context, '/DataDeletionPage'),
                   ),
+                  _buildSettingItem(
+                    'assets/icons/contacticon.svg',
+                    'Network Debug',
+                    'Diagnose API connectivity issues',
+                    () => Navigator.pushNamed(context, '/debug-network'),
+                  ),
                   const SizedBox(height: 20),
                   ElevatedButton(
                     onPressed: () => _confirmLogout(context),
