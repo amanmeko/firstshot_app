@@ -50,26 +50,30 @@ class BookingService {
   }) async {
     try {
       final headers = await _getHeaders();
-      print('BookingService.getAvailableTimes: courtId=$courtId date=$date headers=${headers.keys}');
+      print('🔍 Fetching available time slots for court $courtId on $date');
       
-      // Use the V2 endpoint which should provide more accurate availability
-      final response = await http.get(
-        Uri.parse('$baseUrl/bookings/available-times-v2?court_id=$courtId&date=$date'),
-        headers: headers,
-      );
-      print('GET /available-times-v2 -> status: ${response.statusCode}');
-      if (response.statusCode != 200) {
-        print('Response body: ${response.body}');
+      // Primary: Use the V2 endpoint which should provide more accurate availability
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl/bookings/available-times-v2?court_id=$courtId&date=$date'),
+          headers: headers,
+        );
+        
+        print('✅ V2 endpoint response: ${response.statusCode}');
+        
+        if (response.statusCode == 200) {
+          final List<dynamic> data = json.decode(response.body);
+          print('🎯 Successfully fetched ${data.length} available time slots from V2 endpoint');
+          return data.cast<Map<String, dynamic>>();
+        } else {
+          print('⚠️ V2 endpoint failed with status ${response.statusCode}: ${response.body}');
+        }
+      } catch (e) {
+        print('❌ V2 endpoint error: $e');
       }
 
-      if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        print('Successfully fetched ${data.length} available time slots from V2 endpoint');
-        return data.cast<Map<String, dynamic>>();
-      }
-
-      // If V2 fails, fall back to V1 endpoint
-      print('V2 endpoint failed, trying V1 endpoint...');
+      // Fallback: Use V1 endpoint if V2 fails
+      print('🔄 Falling back to V1 endpoint...');
       final fallbackResponse = await http.get(
         Uri.parse('$baseUrl/bookings/available-times?court_id=$courtId&date=$date'),
         headers: headers,
@@ -77,14 +81,14 @@ class BookingService {
       
       if (fallbackResponse.statusCode == 200) {
         final List<dynamic> data = json.decode(fallbackResponse.body);
-        print('Successfully fetched ${data.length} available time slots from V1 endpoint (fallback)');
+        print('🔄 Successfully fetched ${data.length} available time slots from V1 endpoint (fallback)');
         return data.cast<Map<String, dynamic>>();
       }
 
-      // Try to parse error body for a clearer message
-      String errorMessage = 'Failed to load available times (HTTP ${response.statusCode})';
+      // Error handling
+      String errorMessage = 'Failed to load available times (HTTP ${fallbackResponse.statusCode})';
       try {
-        final dynamic body = json.decode(response.body);
+        final dynamic body = json.decode(fallbackResponse.body);
         if (body is Map<String, dynamic>) {
           if (body['message'] is String && (body['message'] as String).isNotEmpty) {
             errorMessage = body['message'];
@@ -103,10 +107,11 @@ class BookingService {
       } catch (_) {
         // ignore JSON parse failures; keep default errorMessage
       }
-      print('Throwing error from getAvailableTimes: ' + errorMessage);
+      
+      print('💥 Both endpoints failed. Throwing error: $errorMessage');
       throw Exception(errorMessage);
     } catch (e, st) {
-      print('Error fetching available times: $e');
+      print('💥 Error fetching available times: $e');
       print(st);
       throw Exception('Error fetching available times: $e');
     }
@@ -282,54 +287,87 @@ class BookingService {
   }) async {
     try {
       final headers = await _getHeaders();
+      print('🔍 Fetching existing bookings for court $courtId on $date');
       
-      // Try multiple possible endpoints for getting court bookings
-      // Based on the API routes, we'll try different approaches
-      final endpoints = [
+      // Try the new dedicated endpoint first
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl/bookings/court-bookings?court_id=$courtId&date=$date'),
+          headers: headers,
+        );
+        
+        print('✅ Court-bookings endpoint response: ${response.statusCode}');
+        
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          List<Map<String, dynamic>> bookings = _extractBookingsFromResponse(data);
+          print('🎯 Successfully fetched ${bookings.length} existing bookings from court-bookings endpoint');
+          return bookings;
+        }
+      } catch (e) {
+        print('❌ Court-bookings endpoint error: $e');
+      }
+      
+      // Fallback: Try alternative endpoints
+      print('🔄 Trying alternative endpoints...');
+      final fallbackEndpoints = [
         'bookings?court_id=$courtId&date=$date',
         'bookings?court_id=$courtId&booking_date=$date',
-        'bookings/court?court_id=$courtId&date=$date',
-        'bookings/court-bookings?court_id=$courtId&date=$date',
-        'courts/$courtId/bookings?date=$date',
+        'bookings/customer?court_id=$courtId&date=$date',
       ];
       
-      for (final endpoint in endpoints) {
+      for (final endpoint in fallbackEndpoints) {
         try {
           final uri = Uri.parse('$baseUrl/$endpoint');
-          print('Trying endpoint: $endpoint');
+          print('🔄 Trying endpoint: $endpoint');
           final response = await http.get(uri, headers: headers);
           
           if (response.statusCode == 200) {
             final data = json.decode(response.body);
-            List<Map<String, dynamic>> bookings = [];
-            
-            // Handle different response formats
-            if (data is Map<String, dynamic>) {
-              if (data['bookings'] is List) {
-                bookings = (data['bookings'] as List).cast<Map<String, dynamic>>();
-              } else if (data['data'] is List) {
-                bookings = (data['data'] as List).cast<Map<String, dynamic>>();
-              }
-            } else if (data is List) {
-              bookings = data.cast<Map<String, dynamic>>();
-            }
-            
-            print('Successfully fetched ${bookings.length} existing bookings from endpoint: $endpoint');
+            List<Map<String, dynamic>> bookings = _extractBookingsFromResponse(data);
+            print('🔄 Successfully fetched ${bookings.length} existing bookings from endpoint: $endpoint');
             return bookings;
           }
         } catch (e) {
-          print('Failed to fetch from endpoint $endpoint: $e');
+          print('❌ Failed to fetch from endpoint $endpoint: $e');
           continue;
         }
       }
       
       // If no endpoints work, return empty list
-      print('No working endpoints found for court bookings, returning empty list');
+      print('⚠️ No working endpoints found for court bookings, returning empty list');
       return [];
     } catch (e) {
       // If there's an error, return empty list to avoid blocking the main flow
-      print('Error fetching court bookings: $e');
+      print('💥 Error fetching court bookings: $e');
       return [];
     }
+  }
+
+  // Helper method to extract bookings from different response formats
+  static List<Map<String, dynamic>> _extractBookingsFromResponse(dynamic data) {
+    List<Map<String, dynamic>> bookings = [];
+    
+    try {
+      if (data is Map<String, dynamic>) {
+        if (data['bookings'] is List) {
+          bookings = (data['bookings'] as List).cast<Map<String, dynamic>>();
+        } else if (data['data'] is List) {
+          bookings = (data['data'] as List).cast<Map<String, dynamic>>();
+        } else if (data['bookings'] is Map) {
+          // Handle paginated response
+          final paginatedData = data['bookings']['data'] as List?;
+          if (paginatedData != null) {
+            bookings = paginatedData.cast<Map<String, dynamic>>();
+          }
+        }
+      } else if (data is List) {
+        bookings = data.cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      print('⚠️ Error extracting bookings from response: $e');
+    }
+    
+    return bookings;
   }
 }

@@ -10,6 +10,7 @@ import 'services/booking_service.dart';
 import 'models/court.dart';
 import 'models/time_slot.dart';
 import 'bookingdetails.dart' as booking_details_create;
+import 'package:flutter/foundation.dart' show kDebugMode;
 
 class BookingPage extends StatefulWidget {
   const BookingPage({Key? key}) : super(key: key);
@@ -64,9 +65,38 @@ class _BookingPageState extends State<BookingPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Refresh time slots when returning to the page
+    // Refresh time slots when returning to the page to ensure data is current
     if (selectedCourt != null && availableTimeSlots.isNotEmpty) {
+      print('🔄 Page became active, refreshing time slots...');
       _loadAvailableTimeSlots();
+    }
+  }
+
+  // Method to manually refresh all data
+  Future<void> _refreshAllData() async {
+    print('🔄 Manual refresh requested by user');
+    setState(() {
+      isLoadingTimeSlots = true;
+    });
+    
+    try {
+      await _loadAvailableTimeSlots();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Time slots refreshed successfully'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      print('💥 Error during manual refresh: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to refresh: $e'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -393,23 +423,35 @@ class _BookingPageState extends State<BookingPage> {
     List<Map<String, dynamic>> timeSlots,
     List<Map<String, dynamic>> existingBookings,
   ) {
+    print('🔍 Starting time slot filtering...');
+    print('  - Total time slots from API: ${timeSlots.length}');
+    print('  - Existing bookings found: ${existingBookings.length}');
+    
     if (existingBookings.isEmpty) {
-      // If we couldn't get existing bookings, we can't filter them out
-      // This is a fallback to ensure the app still works
-      print('Warning: No existing bookings data available, showing all time slots from API');
+      print('⚠️ No existing bookings data available - running in fallback mode');
+      print('  - This means we cannot filter out conflicting slots');
+      print('  - Users may see already booked slots as available');
       return timeSlots;
     }
 
-    print('Filtering ${timeSlots.length} time slots against ${existingBookings.length} existing bookings');
+    // Log existing bookings for debugging
+    for (int i = 0; i < existingBookings.length; i++) {
+      final booking = existingBookings[i];
+      final start = booking['start_time'] ?? booking['start'] ?? booking['startTime'] ?? 'unknown';
+      final end = booking['end_time'] ?? booking['end'] ?? booking['endTime'] ?? 'unknown';
+      print('  - Existing booking $i: $start - $end');
+    }
     
     final filteredSlots = timeSlots.where((slot) {
       final slotStart = slot['start'] as String?;
       final slotEnd = slot['end'] as String?;
       
       if (slotStart == null || slotEnd == null) {
-        print('Warning: Invalid time slot data: start=$slotStart, end=$slotEnd');
+        print('⚠️ Invalid time slot data: start=$slotStart, end=$slotEnd');
         return false; // Skip invalid slots
       }
+      
+      print('  - Checking slot: $slotStart - $slotEnd');
       
       // Check if this time slot conflicts with any existing booking
       for (final booking in existingBookings) {
@@ -424,16 +466,21 @@ class _BookingPageState extends State<BookingPage> {
         if (bookingStart != null && bookingEnd != null) {
           // Check for time overlap
           if (_hasTimeOverlap(slotStart, slotEnd, bookingStart, bookingEnd)) {
-            print('Filtering out conflicting time slot: $slotStart-$slotEnd (conflicts with booking: $bookingStart-$bookingEnd)');
+            print('❌ CONFLICT DETECTED: Slot $slotStart-$slotEnd conflicts with booking $bookingStart-$bookingEnd');
             return false; // This slot conflicts, filter it out
           }
         }
       }
       
+      print('✅ Slot $slotStart-$slotEnd is available');
       return true; // No conflicts, keep this slot
     }).toList();
     
-    print('Filtered ${timeSlots.length} time slots to ${filteredSlots.length} available slots');
+    print('🎯 Filtering complete:');
+    print('  - Original slots: ${timeSlots.length}');
+    print('  - Available slots after filtering: ${filteredSlots.length}');
+    print('  - Slots filtered out: ${timeSlots.length - filteredSlots.length}');
+    
     return filteredSlots;
   }
 
@@ -446,10 +493,23 @@ class _BookingPageState extends State<BookingPage> {
       final start2Minutes = _timeStringToMinutes(start2);
       final end2Minutes = _timeStringToMinutes(end2);
       
+      // Validate time values
+      if (start1Minutes < 0 || end1Minutes < 0 || start2Minutes < 0 || end2Minutes < 0) {
+        print('⚠️ Invalid time values detected: start1=$start1, end1=$end1, start2=$start2, end2=$end2');
+        return false;
+      }
+      
       // Check for overlap: if one range starts before another ends and ends after another starts
-      return start1Minutes < end2Minutes && end1Minutes > start2Minutes;
+      final hasOverlap = start1Minutes < end2Minutes && end1Minutes > start2Minutes;
+      
+      if (hasOverlap) {
+        print('  - Overlap detected: $start1-$end1 overlaps with $start2-$end2');
+        print('  - Minutes: $start1Minutes-$end1Minutes overlaps with $start2Minutes-$end2Minutes');
+      }
+      
+      return hasOverlap;
     } catch (e) {
-      print('Error checking time overlap: $e');
+      print('💥 Error checking time overlap: $e');
       return false; // If there's an error, assume no overlap to be safe
     }
   }
@@ -457,20 +517,37 @@ class _BookingPageState extends State<BookingPage> {
   // Helper method to convert time string (HH:MM) to minutes since midnight
   int _timeStringToMinutes(String timeString) {
     try {
+      if (timeString.isEmpty) {
+        print('⚠️ Empty time string provided');
+        return -1;
+      }
+      
       final parts = timeString.split(':');
       if (parts.length == 2) {
-        final hours = int.tryParse(parts[0]) ?? 0;
-        final minutes = int.tryParse(parts[1]) ?? 0;
+        final hours = int.tryParse(parts[0]) ?? -1;
+        final minutes = int.tryParse(parts[1]) ?? -1;
+        
+        if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+          print('⚠️ Invalid time values: hours=$hours, minutes=$minutes');
+          return -1;
+        }
+        
         return hours * 60 + minutes;
       } else if (parts.length == 1) {
         // Handle case where time might be just hours
-        final hours = int.tryParse(parts[0]) ?? 0;
+        final hours = int.tryParse(parts[0]) ?? -1;
+        if (hours < 0 || hours > 23) {
+          print('⚠️ Invalid hour value: $hours');
+          return -1;
+        }
         return hours * 60;
+      } else {
+        print('⚠️ Unexpected time format: $timeString (expected HH:MM or HH)');
+        return -1;
       }
-      return 0; // Default fallback
     } catch (e) {
-      print('Error parsing time string "$timeString": $e');
-      return 0;
+      print('💥 Error parsing time string "$timeString": $e');
+      return -1;
     }
   }
 
@@ -650,70 +727,91 @@ class _BookingPageState extends State<BookingPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text("Available Time Slots", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              IconButton(
-                onPressed: _loadAvailableTimeSlots,
-                icon: const Icon(Icons.refresh, color: Color(0xFF4997D0)),
-                tooltip: 'Refresh time slots',
+              Row(
+                children: [
+                  if (_isRunningInFallbackMode) ...[
+                    Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                    const SizedBox(width: 4),
+                    Text('Fallback Mode', style: TextStyle(color: Colors.orange, fontSize: 12)),
+                    const SizedBox(width: 8),
+                  ],
+                  // Debug button (remove in production)
+                  if (kDebugMode) ...[
+                    IconButton(
+                      onPressed: _testTimeOverlapDetection,
+                      icon: const Icon(Icons.bug_report, color: Colors.grey),
+                      tooltip: 'Test time overlap detection',
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  IconButton(
+                    onPressed: _refreshAllData,
+                    icon: const Icon(Icons.refresh, color: Color(0xFF4997D0)),
+                    tooltip: 'Refresh time slots',
+                  ),
+                ],
               ),
             ],
           ),
           if (_lastRefreshTime != null) ...[
-            const SizedBox(height: 4),
             Row(
               children: [
-                Text(
-                  'Last updated: ${DateFormat('HH:mm').format(_lastRefreshTime!)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
+                Text('Last updated: ${DateFormat('HH:mm').format(_lastRefreshTime!)}', 
+                     style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                const SizedBox(width: 8),
                 if (DateTime.now().difference(_lastRefreshTime!).inMinutes > 5) ...[
-                  const SizedBox(width: 8),
-                  Icon(
-                    Icons.warning_amber,
-                    size: 16,
-                    color: Colors.orange,
-                  ),
-                  Text(
-                    'Slots may be outdated',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.orange,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
+                  Icon(Icons.warning_amber, color: Colors.orange, size: 16),
+                  const SizedBox(width: 4),
+                  Text('Data may be outdated', style: TextStyle(color: Colors.orange, fontSize: 12)),
                 ],
               ],
             ),
-          ],
-          // Show warning if running in fallback mode
-          if (_isRunningInFallbackMode) ...[
             const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.orange, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Limited validation: Some time slots may not be available due to recent bookings',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.orange[700],
+            if (_isRunningInFallbackMode) ...[
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Running in fallback mode. Some already booked slots may appear as available.',
+                        style: TextStyle(color: Colors.orange[800], fontSize: 12),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+              const SizedBox(height: 8),
+            ] else if (availableTimeSlots.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Time slots have been filtered to exclude already booked periods.',
+                        style: TextStyle(color: Colors.green[800], fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
           ],
           const SizedBox(height: 12),
           if (isLoadingTimeSlots)
@@ -1134,6 +1232,29 @@ class _BookingPageState extends State<BookingPage> {
         );
       },
     ) ?? false;
+  }
+
+  // Test method to verify time overlap detection (for debugging)
+  void _testTimeOverlapDetection() {
+    print('🧪 Testing time overlap detection...');
+    
+    // Test case 1: Overlapping times
+    final test1 = _hasTimeOverlap('09:00', '10:00', '09:30', '10:30');
+    print('Test 1: 09:00-10:00 vs 09:30-10:30 (should overlap): $test1');
+    
+    // Test case 2: Non-overlapping times
+    final test2 = _hasTimeOverlap('09:00', '10:00', '10:00', '11:00');
+    print('Test 2: 09:00-10:00 vs 10:00-11:00 (should not overlap): $test2');
+    
+    // Test case 3: Adjacent times
+    final test3 = _hasTimeOverlap('09:00', '10:00', '10:00', '11:00');
+    print('Test 3: 09:00-10:00 vs 10:00-11:00 (adjacent, should not overlap): $test3');
+    
+    // Test case 4: One time completely within another
+    final test4 = _hasTimeOverlap('09:00', '11:00', '09:30', '10:30');
+    print('Test 4: 09:00-11:00 vs 09:30-10:30 (one within another, should overlap): $test4');
+    
+    print('🧪 Time overlap detection test complete');
   }
 
 
