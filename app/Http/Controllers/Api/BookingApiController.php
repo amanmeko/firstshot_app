@@ -139,6 +139,11 @@ class BookingApiController extends Controller
             ->where('status', '!=', 'cancelled')
             ->get();
 
+        // Debug: Log the existing bookings
+        \Log::info('Existing bookings for court ' . $request->court_id . ' on ' . $date, [
+            'bookings' => $existingBookings->toArray()
+        ]);
+
         // Mark booked slots as unavailable
         foreach ($existingBookings as $booking) {
             foreach ($allTimeSlots as &$slot) {
@@ -152,6 +157,12 @@ class BookingApiController extends Controller
                     $slot['is_available'] = false;
                     $slot['booking_id'] = $booking->id;
                     $slot['status'] = 'booked';
+                    
+                    // Debug: Log the overlap
+                    \Log::info('Slot marked as booked', [
+                        'slot' => $slot,
+                        'booking' => $booking->toArray()
+                    ]);
                 }
             }
         }
@@ -160,6 +171,15 @@ class BookingApiController extends Controller
         $availableSlots = array_filter($allTimeSlots, function ($slot) {
             return $slot['is_available'] === true;
         });
+
+        // Debug: Log the final result
+        \Log::info('Final available slots', [
+            'total_slots' => count($allTimeSlots),
+            'available_slots' => array_values($availableSlots),
+            'booked_slots' => array_filter($allTimeSlots, function ($slot) {
+                return $slot['is_available'] === false;
+            })
+        ]);
 
         return response()->json([
             'success' => true,
