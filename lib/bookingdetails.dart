@@ -1,25 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:curved_navigation_bar/curved_navigation_bar.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'services/booking_service.dart';
-import 'models/court.dart';
-import 'payment_webview_page.dart';
+import 'services/payment_service.dart';
+import 'receipt_page.dart';
 
 class BookingDetailsPage extends StatefulWidget {
-  final Court selectedCourt;
-  final DateTime selectedDate;
-  final TimeOfDay selectedTime;
-  final String selectedDuration;
-  final int customerId;
+  final int courtId;
+  final String selectedTime;
+  final int selectedDuration;
+  final double price;
+  final String courtName;
 
   const BookingDetailsPage({
     super.key,
-    required this.selectedCourt,
-    required this.selectedDate,
+    required this.courtId,
     required this.selectedTime,
     required this.selectedDuration,
-    required this.customerId,
+    required this.price,
+    required this.courtName,
   });
 
   @override
@@ -27,267 +26,213 @@ class BookingDetailsPage extends StatefulWidget {
 }
 
 class _BookingDetailsPageState extends State<BookingDetailsPage> {
-  int _selectedIndex = 0;
-  final TextEditingController _voucherController = TextEditingController();
-  bool isLoading = false;
-  String? promoCodeMessage;
-  bool isPromoCodeValid = false;
-  double discount = 0.0;
+  final TextEditingController _notesController = TextEditingController();
+  final TextEditingController _promoCodeController = TextEditingController();
+  bool _isLoading = false;
+  String? _promoCodeError;
+  double _discount = 0.0;
+  String? _promoCodeId;
+  double _finalPrice = 0.0;
 
-  final Map<String, int> gearQuantities = {
-    "Rent Paddles": 0,
-    "Rent Balls": 0,
-    "Ball Machine": 0,
-  };
-
-  final List<String> _labels = ['Booking', 'Lessons', 'Home', 'Instructors', 'Settings'];
-  final List<IconData> _icons = [
-    Icons.calendar_today,
-    Icons.assignment,
-    Icons.home,
-    Icons.sports_tennis_rounded,
-    Icons.settings,
-  ];
-
-  void _adjustGear(String gear, int delta) {
-    setState(() {
-      final newQty = gearQuantities[gear]! + delta;
-      gearQuantities[gear] = newQty < 0 ? 0 : newQty;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _finalPrice = widget.price;
   }
 
-  double get _subtotal {
-    final durationHours = int.parse(widget.selectedDuration.split(' ')[0]);
-    final basePrice = widget.selectedCourt.price * durationHours;
-    final gearPrice = gearQuantities.values.reduce((a, b) => a + b) * 15.0;
-    return basePrice + gearPrice;
-  }
-
-  double get _total {
-    return _subtotal - discount;
+  @override
+  void dispose() {
+    _notesController.dispose();
+    _promoCodeController.dispose();
+    super.dispose();
   }
 
   Future<void> _validatePromoCode() async {
-    if (_voucherController.text.trim().isEmpty) return;
+    if (_promoCodeController.text.trim().isEmpty) {
+      setState(() {
+        _promoCodeError = 'Please enter a promo code';
+      });
+      return;
+    }
 
     setState(() {
-      isLoading = true;
+      _isLoading = true;
+      _promoCodeError = null;
     });
 
     try {
       final response = await BookingService.validatePromoCode(
-        code: _voucherController.text.trim(),
-        subtotal: _subtotal,
+        code: _promoCodeController.text.trim(),
+        subtotal: widget.price,
       );
 
-      setState(() {
-        isLoading = false;
-        isPromoCodeValid = response['success'];
-        promoCodeMessage = response['message'];
-        
-        if (response['success'] && response['promoCode'] != null) {
-          final promoCode = response['promoCode'];
-          if (promoCode['type'] == 'percentage') {
-            discount = (_subtotal * promoCode['value']) / 100;
-          } else {
-            discount = promoCode['value'].toDouble();
-          }
-        } else {
-          discount = 0.0;
-        }
-      });
+      if (response['success'] == true) {
+        final promoCode = response['promoCode'];
+        final discount = promoCode['type'] == 'percentage'
+            ? (widget.price * promoCode['value']) / 100
+            : promoCode['value'].toDouble();
+
+        setState(() {
+          _discount = discount;
+          _promoCodeId = promoCode['id'].toString();
+          _finalPrice = widget.price - _discount;
+          _promoCodeError = null;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Promo code applied! Discount: RM ${discount.toStringAsFixed(2)}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        setState(() {
+          _promoCodeError = response['message'] ?? 'Invalid promo code';
+          _discount = 0.0;
+          _promoCodeId = null;
+          _finalPrice = widget.price;
+        });
+      }
     } catch (e) {
       setState(() {
-        isLoading = false;
-        isPromoCodeValid = false;
-        promoCodeMessage = 'Error validating promo code: $e';
-        discount = 0.0;
+        _promoCodeError = 'Error validating promo code: $e';
+        _discount = 0.0;
+        _promoCodeId = null;
+        _finalPrice = widget.price;
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
       });
     }
   }
 
-  Future<void> _handleCheckout() async {
-    if (isLoading) return;
-
+  Future<void> _createBooking() async {
     setState(() {
-      isLoading = true;
+      _isLoading = true;
     });
 
     try {
+      final storage = const FlutterSecureStorage();
+      final customerIdStr = await storage.read(key: 'user_id');
+      
+      if (customerIdStr == null) {
+        throw Exception('Customer ID not found. Please log in again.');
+      }
+
+      final customerId = int.tryParse(customerIdStr);
+      if (customerId == null) {
+        throw Exception('Invalid customer ID.');
+      }
+
       // Calculate end time based on duration
-      final durationHours = int.parse(widget.selectedDuration.split(' ')[0]);
-      final startTime = widget.selectedTime;
+      final startTime = TimeOfDay.fromDateTime(DateFormat('HH:mm').parse(widget.selectedTime));
       final endTime = TimeOfDay(
-        hour: (startTime.hour + durationHours) % 24,
+        hour: (startTime.hour + widget.selectedDuration) % 24,
         minute: startTime.minute,
       );
 
       final response = await BookingService.createBooking(
-        courtId: widget.selectedCourt.id,
-        customerId: widget.customerId,
-        bookingDate: DateFormat('yyyy-MM-dd').format(widget.selectedDate),
-        startTime: '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
+        courtId: widget.courtId,
+        customerId: customerId,
+        bookingDate: DateFormat('yyyy-MM-dd').format(DateTime.now().add(const Duration(days: 1))),
+        startTime: widget.selectedTime,
         endTime: '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}',
-        price: _total,
+        price: _finalPrice,
         paymentMethod: 'online',
-        notes: 'Booking from mobile app',
-        promoCode: isPromoCodeValid ? _voucherController.text.trim() : null,
+        notes: _notesController.text.trim(),
+        promoCode: _promoCodeId,
+        durationHours: widget.selectedDuration,
       );
 
-      setState(() { isLoading = false; });
-
       if (response['success'] == true) {
-        // Case 1: direct URL
-        final paymentUrl = response['payment_url'] ?? response['redirect_url'] ?? response['url'];
-        if (paymentUrl is String && paymentUrl.isNotEmpty) {
-          if (!mounted) return;
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => PaymentWebViewPage(url: paymentUrl, title: 'Payment'),
-            ),
-          );
-          return;
-        }
-
-        // Case 2: backend returned structured POST form details
-        final payment = response['payment'];
-        if (payment is Map) {
-          final method = payment['method'];
-          final actionUrl = payment['action_url'];
-          final params = payment['params'];
-          if (method == 'POST' && actionUrl is String && params is Map) {
-            String _escapeHtml(Object? value) {
-              final s = (value ?? '').toString();
-              return s
-                  .replaceAll('&', '&amp;')
-                  .replaceAll('<', '&lt;')
-                  .replaceAll('>', '&gt;')
-                  .replaceAll('"', '&quot;')
-                  .replaceAll("'", '&#39;');
-            }
-
-            final inputs = params.entries
-                .map((e) => '<input type="hidden" name="${_escapeHtml(e.key)}" value="${_escapeHtml(e.value)}">')
-                .join();
-            final html = '<!doctype html><html><head><meta charset="utf-8"></head><body onload="document.f.submit()">\n'
-                '<form name="f" method="post" action="${_escapeHtml(actionUrl)}" accept-charset="UTF-8">$inputs</form>'
-                '<noscript><button type="submit">Continue</button></noscript>'
-                '</body></html>';
-            if (!mounted) return;
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PaymentWebViewPage(html: html, title: 'Payment'),
-              ),
-            );
-            return;
-          }
-        }
-        // No URL: fallback to success dialog
-        if (!mounted) return;
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Booking Successful!'),
-            content: Text('Your booking has been created. Booking ID: ${response['booking']?['id'] ?? '-'}'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  Navigator.pop(context);
-                },
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      } else {
-        if (!mounted) return;
-        final message = (response['message'] ?? '').toString();
-        final isSlotUnavailable = message.toLowerCase().contains('not available') ||
-            message.toLowerCase().contains('time slot') ||
-            (response['errors'] is Map &&
-                (response['errors']['time_slot']?.toString().isNotEmpty ?? false));
-
-        if (isSlotUnavailable) {
-          await _showSlotUnavailableDialog();
+        // Extract sale ID from redirect URL
+        final redirectUrl = response['redirect_url'];
+        final saleIdMatch = RegExp(r'/payment/initiate/(\d+)').firstMatch(redirectUrl);
+        
+        if (saleIdMatch != null) {
+          final saleId = int.parse(saleIdMatch.group(1)!);
+          await _processPayment(saleId);
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message.isNotEmpty ? message : 'Booking failed')),
-          );
+          throw Exception('Could not extract sale ID from response');
         }
+      } else {
+        throw Exception(response['message'] ?? 'Failed to create booking');
       }
     } catch (e) {
-      setState(() { isLoading = false; });
-      if (!mounted) return;
-      final msg = e.toString().toLowerCase();
-      if (msg.contains('not available') || msg.contains('time slot')) {
-        await _showSlotUnavailableDialog();
-      } else if (msg.contains('separation symbol')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Time parsing issue. Please reselect a time slot.')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error creating booking: $e')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
-  Future<void> _showSlotUnavailableDialog() async {
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: const [
-            Icon(Icons.warning_amber_rounded, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('Time Slot Unavailable'),
-          ],
-        ),
-        content: const Text(
-          'Sorry, this time slot was just taken. Please choose another available time.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // close dialog
-              Navigator.pop(context); // go back to time slots screen
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Color(0xFF4997D0)),
-            child: const Text('Choose Another Time'),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<void> _processPayment(int saleId) async {
+    try {
+      // Show payment processing dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const PaymentProcessingDialog(),
+      );
 
-  void _onBottomTap(int index) {
-    setState(() => _selectedIndex = index);
-    switch (index) {
-      case 0:
-        Navigator.pushNamed(context, '/booking');
-        break;
-      case 1:
-        Navigator.pushNamed(context, '/coaching');
-        break;
-      case 2:
-        Navigator.pushNamed(context, '/main');
-        break;
-      case 3:
-        Navigator.pushNamed(context, '/instructors');
-        break;
-      case 4:
-        Navigator.pushNamed(context, '/settings');
-        break;
+      // Step 1: Get payment initiation data
+      final paymentData = await PaymentService.initiatePayment(saleId);
+      
+      if (!paymentData['success']) {
+        throw Exception('Failed to get payment data');
+      }
+
+      // Step 2: Submit payment to gateway
+      final paymentResponse = await PaymentService.submitPayment(paymentData['payment']);
+      
+      if (PaymentService.isValidPaymentResponse(paymentResponse)) {
+        // Step 3: Poll for payment status
+        final transactionId = paymentResponse['tranID'];
+        final finalStatus = await PaymentService.pollPaymentStatus(transactionId);
+        
+        // Close processing dialog
+        Navigator.of(context).pop();
+        
+        // Navigate to receipt page
+        final isSuccess = finalStatus['status'] == 'completed';
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ReceiptPage(
+              transactionData: finalStatus['transaction'],
+              isSuccess: isSuccess,
+            ),
+          ),
+        );
+      } else {
+        // Close processing dialog
+        Navigator.of(context).pop();
+        
+        // Show error
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Payment failed - invalid response from gateway'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      // Close processing dialog
+      Navigator.of(context).pop();
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Payment error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -295,300 +240,319 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF9FBFD),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.only(bottom: 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(),
-              const SizedBox(height: 10),
-              _buildCourtBox(),
-              const SizedBox(height: 20),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text("Need Gears for Rental?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              ),
-              const SizedBox(height: 12),
-              _buildGearList(),
-              const SizedBox(height: 16),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  "Price Details",
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                    decoration: TextDecoration.underline,
-                    decorationStyle: TextDecorationStyle.dotted,
-                    decorationColor: Colors.black,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              _buildPriceRow("Total Hours", widget.selectedDuration),
-              _buildPriceRow("Court Price", "RM ${widget.selectedCourt.price * int.parse(widget.selectedDuration.split(' ')[0])}"),
-              if (gearQuantities.values.reduce((a, b) => a + b) > 0) ...[
-                for (var entry in gearQuantities.entries)
-                  if (entry.value > 0)
-                    _buildPriceRow("Add On – ${entry.key} (${entry.value})", "RM ${entry.value * 15}"),
-              ],
-              if (discount > 0) ...[
-                _buildPriceRow("Discount", "-RM ${discount.toStringAsFixed(2)}", isBold: true),
-              ],
-              const Divider(thickness: 1, height: 20),
-              _buildPriceRow("Grand Total", "RM ${_total.toStringAsFixed(2)}", isBold: true),
-              const SizedBox(height: 16),
-              _buildVoucherInput(),
-              const SizedBox(height: 12),
-              _buildCheckoutButton(),
-            ],
+      appBar: AppBar(
+        title: const Text(
+          'Booking Details',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
           ),
         ),
+        backgroundColor: const Color(0xFF4997D0),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
-      bottomNavigationBar: CurvedNavigationBar(
-        index: _selectedIndex,
-        backgroundColor: Colors.transparent,
-        color: Colors.black,
-        height: 65,
-        animationDuration: const Duration(milliseconds: 300),
-        items: List.generate(_icons.length, (index) {
-          return Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _icons[index],
-                color: _selectedIndex == index ? const Color(0xFF4997D0) : Colors.white,
-                size: 24,
-              ),
-              if (_selectedIndex != index)
-                Text(_labels[index], style: const TextStyle(color: Colors.white, fontSize: 10)),
-            ],
-          );
-        }),
-        onTap: _onBottomTap,
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Stack(
-      children: [
-        ClipPath(
-          clipper: CustomDiagonalClipper(),
-          child: SvgPicture.asset(
-            'assets/images/orderbanner.svg',
-            height: 170,
-            width: double.infinity,
-            fit: BoxFit.cover,
-          ),
-        ),
-
-        Positioned(
-          top: 30,
-          left: 16,
-          child: CircleAvatar(
-            backgroundColor: Colors.white,
-            child: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.black),
-              onPressed: () => Navigator.pop(context),
-            ),
-          ),
-        ),
-        const Positioned(
-          bottom: 8,
-          left: 16,
-          child: Text("Booking Details", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCourtBox() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF4997D0),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(widget.selectedCourt.name, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                Text("${DateFormat('MMM dd, yyyy').format(widget.selectedDate)} at ${widget.selectedTime.format(context)}", 
-                     style: const TextStyle(color: Colors.white, fontSize: 12)),
-                Text("Duration: ${widget.selectedDuration}", style: const TextStyle(color: Colors.white, fontSize: 12)),
-              ],
+            // Booking Summary Card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 0,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Booking Summary',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  _buildInfoRow('Court', widget.courtName),
+                  _buildInfoRow('Date', DateFormat('EEEE, MMMM d, yyyy').format(DateTime.now().add(const Duration(days: 1)))),
+                  _buildInfoRow('Time', '${widget.selectedTime} (${widget.selectedDuration} hour${widget.selectedDuration > 1 ? 's' : ''})'),
+                  _buildInfoRow('Duration', '${widget.selectedDuration} hour${widget.selectedDuration > 1 ? 's' : ''}'),
+                  
+                  const Divider(height: 32),
+                  
+                  // Price breakdown
+                  _buildInfoRow('Base Price', 'RM ${widget.price.toStringAsFixed(2)}'),
+                  if (_discount > 0) ...[
+                    _buildInfoRow('Discount', '-RM ${_discount.toStringAsFixed(2)}', isDiscount: true),
+                  ],
+                  const Divider(height: 16),
+                  _buildInfoRow(
+                    'Total Amount',
+                    'RM ${_finalPrice.toStringAsFixed(2)}',
+                    isTotal: true,
+                  ),
+                ],
+              ),
             ),
-            Text("RM${widget.selectedCourt.price}/hr", style: const TextStyle(color: Colors.white)),
+            
+            const SizedBox(height: 20),
+            
+            // Promo Code Section
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 0,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Promo Code (Optional)',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _promoCodeController,
+                          decoration: InputDecoration(
+                            hintText: 'Enter promo code',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            errorText: _promoCodeError,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton(
+                        onPressed: _isLoading ? null : _validatePromoCode,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF4997D0),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 20),
+            
+            // Notes Section
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 0,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Additional Notes (Optional)',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  TextField(
+                    controller: _notesController,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      hintText: 'Add any special requests or notes...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 32),
+            
+            // Checkout Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _createBooking,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4997D0),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 2,
+                ),
+                child: _isLoading
+                    ? const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Text('Processing...'),
+                        ],
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.payment),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Proceed to Payment - RM ${_finalPrice.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildGearList() {
-    return SizedBox(
-      height: 120,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        children: gearQuantities.keys.map((gear) => _buildAddon(gear)).toList(),
-      ),
-    );
-  }
-
-  Widget _buildAddon(String title) {
-    int quantity = gearQuantities[title]!;
-    return Container(
-      width: 120,
-      margin: const EdgeInsets.only(right: 5),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.blue),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 5),
-          const Text("RM 15 / hr", style: TextStyle(fontSize: 12)),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _counterButton(Icons.remove, () => _adjustGear(title, -1)),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text("$quantity", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
-              _counterButton(Icons.add, () => _adjustGear(title, 1)),
-            ],
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _counterButton(IconData icon, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.red),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        padding: const EdgeInsets.all(4),
-        child: Icon(icon, color: Colors.red, size: 20),
-      ),
-    );
-  }
-
-  Widget _buildPriceRow(String label, String value, {bool isBold = false}) {
+  Widget _buildInfoRow(String label, String value, {bool isTotal = false, bool isDiscount = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
-          Text(value, style: TextStyle(fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildVoucherInput() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 30),
-      child: Column(
-        children: [
-          TextField(
-            controller: _voucherController,
-            decoration: InputDecoration(
-              hintText: "Enter your Voucher Code",
-              prefixIcon: const Icon(Icons.card_giftcard),
-              suffixIcon: isLoading 
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : IconButton(
-                    icon: const Icon(Icons.check),
-                    onPressed: _validatePromoCode,
-                  ),
-              enabledBorder: OutlineInputBorder(
-                borderSide: BorderSide(
-                  color: isPromoCodeValid ? Colors.green : Colors.blueAccent,
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(
-                  color: isPromoCodeValid ? Colors.green : Colors.blueAccent,
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+              fontWeight: isTotal ? FontWeight.w600 : FontWeight.w500,
             ),
-            onSubmitted: (_) => _validatePromoCode(),
           ),
-          if (promoCodeMessage != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              promoCodeMessage!,
-              style: TextStyle(
-                color: isPromoCodeValid ? Colors.green : Colors.red,
-                fontSize: 12,
-              ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isTotal ? 18 : 14,
+              fontWeight: isTotal ? FontWeight.w700 : FontWeight.w600,
+              color: isDiscount 
+                ? Colors.green 
+                : isTotal 
+                  ? const Color(0xFF4997D0)
+                  : Colors.grey[800],
             ),
-          ],
+          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCheckoutButton() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: ElevatedButton(
-        onPressed: isLoading ? null : _handleCheckout,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF4997D0),
-          minimumSize: const Size.fromHeight(50),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        child: isLoading 
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-            )
-          : const Text("Checkout Now", style: TextStyle(fontSize: 16, color: Colors.white)),
       ),
     );
   }
 }
 
-class CustomDiagonalClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.lineTo(0, size.height - 60);
-    path.quadraticBezierTo(size.width / 2, size.height, size.width, size.height - 60);
-    path.lineTo(size.width, 0);
-    path.close();
-    return path;
-  }
+// Payment Processing Dialog
+class PaymentProcessingDialog extends StatelessWidget {
+  const PaymentProcessingDialog({super.key});
 
   @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(
+              color: Color(0xFF4997D0),
+              strokeWidth: 3,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Processing Payment',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1F2937),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Please wait while we process your payment...',
+              style: TextStyle(
+                fontSize: 14,
+                color: Color(0xFF6B7280),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

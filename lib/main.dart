@@ -173,14 +173,33 @@ class MyApp extends StatelessWidget {
         '/payment': (context) {
           final args = ModalRoute.of(context)?.settings.arguments;
           String url = '';
-          String? title;
           if (args is Map) {
             url = (args['url'] ?? '').toString();
-            title = args['title']?.toString();
           }
           return ProtectedRoute(
             routeName: 'Payment',
-            child: PaymentWebViewPage(url: url, title: title),
+            child: PaymentWebViewPage(
+              paymentUrl: url,
+              onPaymentComplete: (transactionData) {
+                // Handle payment completion
+                if (transactionData != null) {
+                  final isSuccess = transactionData['status'] == '00' || transactionData['status'] == 'completed';
+                  
+                  // Navigate to receipt page
+                  Navigator.pushReplacementNamed(
+                    context,
+                    '/receipts',
+                    arguments: {
+                      'transactionData': transactionData,
+                      'isSuccess': isSuccess,
+                    },
+                  );
+                } else {
+                  // Payment was cancelled or failed
+                  Navigator.pop(context, 'cancelled');
+                }
+              },
+            ),
           );
         },
 

@@ -94,22 +94,44 @@ class _BookingDetailsPageState extends State<BookingDetailsPage> {
   }
 
   TimeOfDay? _parseTime(String? s) {
-    if (s == null) return null;
+    if (s == null || s.isEmpty) return null;
     try {
-      // ISO or full datetime
+      // Handle HH:mm format first (most common)
+      if (s.contains(':') && !s.contains('T') && !s.contains('-') && !s.contains(' ')) {
+        final parts = s.split(':');
+        if (parts.length >= 2) {
+          final h = int.tryParse(parts[0]) ?? 0;
+          final m = int.tryParse(parts[1]) ?? 0;
+          if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+            return TimeOfDay(hour: h, minute: m);
+          }
+        }
+      }
+      
+      // Handle ISO or full datetime format
       if (s.contains('T') || s.contains('-') || s.contains(' ')) {
-        final dt = DateTime.parse(s);
-        return TimeOfDay.fromDateTime(dt);
+        try {
+          final dt = DateTime.parse(s);
+          return TimeOfDay.fromDateTime(dt);
+        } catch (e) {
+          print('Error parsing datetime: $e');
+          return null;
+        }
       }
-      // HH:mm
-      final parts = s.split(':');
-      if (parts.length >= 2) {
-        final h = int.tryParse(parts[0]) ?? 0;
-        final m = int.tryParse(parts[1]) ?? 0;
-        return TimeOfDay(hour: h, minute: m);
+      
+      // Handle other formats
+      if (s.length == 4) {
+        // Format: HHMM
+        final h = int.tryParse(s.substring(0, 2)) ?? 0;
+        final m = int.tryParse(s.substring(2, 4)) ?? 0;
+        if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+          return TimeOfDay(hour: h, minute: m);
+        }
       }
+      
       return null;
-    } catch (_) {
+    } catch (e) {
+      print('Error parsing time: $e for value: $s');
       return null;
     }
   }
