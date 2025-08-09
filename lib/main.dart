@@ -43,6 +43,7 @@ import 'class_booking_info.dart';
 import 'instructors_page.dart';
 import 'CoachProfilePage.dart';
 import 'widgets/protected_route.dart';
+import 'debug_network_page.dart';
 
 // Game & Match
 import 'game_match_page.dart';
@@ -205,6 +206,9 @@ class MyApp extends StatelessWidget {
 
         // e-Shop
         '/listproducts': (context) => const ListProductsPage(),
+        
+        // Debug
+        '/debug-network': (context) => const DebugNetworkPage(),
       },
     );
   }
